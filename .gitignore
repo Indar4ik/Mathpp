@@ -1,0 +1,15 @@
+*.exe
+*.o
+*.obj
+*.dll
+*.so
+*.pdb
+*_clang
+*_gcc
+*_icpx
+compile_flags.txt
+
+build/
+out/
+.vscode/
+.vs/
