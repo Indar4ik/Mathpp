@@ -7,7 +7,7 @@
 *_clang
 *_gcc
 *_icpx
-*.cpp
+/*.cpp
 compile_flags.txt
 
 build/
