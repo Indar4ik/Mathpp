@@ -39,7 +39,7 @@ inline void wheel_sqrt_fctr(unsigned long n, std::vector<unsigned long>& factors
     while (n % 7 == 0) { factors.push_back(7); n /= 7; }
     // factors.reserve(64);
 
-    static const unsigned long incremenst[] = {};
+    static const unsigned long incremenst[] = {2, 4, 2, 4, 6, 2, 6, 4, 2, 4, 6, 6, 2, 6, 4, 2, 6, 4, 6, 8, 4, 2, 4, 2, 4, 14, 4, 6, 2, 10, 2, 6, 6, 4, 6, 6, 2, 10, 2, 4, 2};
     unsigned long i = 11;
     int idx = 0;
 
@@ -52,7 +52,7 @@ inline void wheel_sqrt_fctr(unsigned long n, std::vector<unsigned long>& factors
             n = q;
         }
         i += incremenst[idx];
-        idx = (idx + 1) & 1;
+        idx = (idx + 1) % 41;
     }
     if (n > 1) factors.push_back(n);
 }
