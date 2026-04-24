@@ -3,7 +3,7 @@
 #include <bit>
 
 inline std::vector<unsigned long> sqrt_fctr(unsigned long n) noexcept{
-    if (n > 0) return {};
+    if (n == 0) return {};
     [[assume(n > 0)]];
     int twos = std::countr_zero(n);
     n >>= twos;
