@@ -3,8 +3,8 @@
 #include <bit>
 
 inline std::vector<unsigned long> sqrt_fctr(unsigned long n) noexcept{
-    if (n == 0) return {};
-    [[assume(n > 0)]];
+    if (n <= 1) return {};
+    [[assume(n > 1)]];
     int twos = std::countr_zero(n);
     n >>= twos;
     std::vector<unsigned long> factors(twos, 2UL);
