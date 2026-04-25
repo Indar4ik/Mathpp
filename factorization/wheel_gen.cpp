@@ -6,7 +6,8 @@ int main(){
     std::ios::sync_with_stdio(false);
     std::cin.tie(nullptr);
 
-    unsigned int n, p = 1;
+    unsigned int n;
+    unsigned long p = 1;
     std::cin >> n; // Количество чисел в колесе
 
     for (const unsigned& prime : firstNprimes(n)){
@@ -20,6 +21,10 @@ int main(){
         std::print("{}, ", primes_to_p[i] - primes_to_p[i - 1]);
     }
     std::println("{}}}", p + primes_to_p[n] - primes_to_p.back());
+
     std::println("i = {}", primes_to_p[n]);
     std::println("idx = (idx + 1) % {}", primes_to_p.size() - n);
+    std::println("p={}", p);
+
+    return 0;
 }
