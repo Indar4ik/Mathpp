@@ -9,6 +9,7 @@
 *_icpx
 /*.cpp
 compile_flags.txt
+factorization/primes2^30.txt
 
 build/
 out/
