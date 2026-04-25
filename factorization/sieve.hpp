@@ -30,7 +30,7 @@ inline std::vector<unsigned> firstNprimes(unsigned n) noexcept{
     if (n == 2) return {2, 3};
     if (n == 3) return {2, 3, 5};
 
-    size_t k = 0;
+    size_t k = 3;
     unsigned limit = (n < 6) ? 13 : (unsigned)(n * (log(n) + log(log(n))));
     std::vector<unsigned> lp(limit + 1, 0), primes(n);
 
@@ -55,6 +55,6 @@ inline std::vector<unsigned> firstNprimes(unsigned n) noexcept{
         i += increments[idx];
         idx = (idx + 1) & 7;
     }
-    
+
     return primes;
 }
