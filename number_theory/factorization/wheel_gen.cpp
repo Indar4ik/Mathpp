@@ -6,20 +6,20 @@ int main(){
     std::ios::sync_with_stdio(false);
     std::cin.tie(nullptr);
 
-    unsigned int n;
-    unsigned long p = 1;
+    uint32_t n;
+    uint64_t p = 1;
     std::cin >> n; // Количество чисел в колесе
     // Колесо с базисом длины n будет пропускать (1 - phi(p_n#)/p_n#) * 100% чисел, где phi - функция Эйлера, p_n# - примориал n-ого простого числа
     // Выражение стремится к 100% (потому что на бесконечности плотность простых бесконечно мала), но размер массива офсетов растёт грубо как n^n
 
-    for (const unsigned& prime : firstNprimes(n)){
+    for (const uint32_t& prime : firstNprimes(n)){
         p *= prime;
     }
 
-    std::vector<unsigned> primes_to_p = sieve(p + 1);
+    std::vector<uint32_t> primes_to_p = sieve(p + 1);
 
     std::print("{{");
-    for (unsigned i = n + 1; i < primes_to_p.size(); ++i){
+    for (uint32_t i = n + 1; i < primes_to_p.size(); ++i){
         std::print("{}, ", primes_to_p[i] - primes_to_p[i - 1]);
     }
     std::println("{}}}", p + primes_to_p[n] - primes_to_p.back());

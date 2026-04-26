@@ -6,10 +6,10 @@ int main(){
     std::ios::sync_with_stdio(false);
     std::cin.tie(nullptr);
 
-    unsigned n;
+    uint32_t n;
     std::cin >> n;
 
-    for (const unsigned& p : sieve(n)){
+    for (const uint32_t& p : sieve(n)){
         std::print("{}, ", p);
     }
 

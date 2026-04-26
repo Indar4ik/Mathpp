@@ -1,8 +1,9 @@
 #pragma once
-#include <vector>
 #include <bit>
+#include <cstdint>
+#include <vector>
 
-inline void sqrt_fctr(unsigned long n, std::vector<unsigned long>& factors) noexcept{
+inline void sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept{
     factors.clear();
     if (n <= 1) return;
 
@@ -11,14 +12,14 @@ inline void sqrt_fctr(unsigned long n, std::vector<unsigned long>& factors) noex
     for (int i = 0; i < twos; ++i) factors.push_back(2UL);
     // factors.reserve(64);
 
-    for (unsigned long i = 3; i * i <= n; i += 2){
+    for (uint64_t i = 3; i * i <= n; i += 2){
         // while (n % i == 0){
         //     factors.push_back(i);
         //     n /= i;
         // }
         while (true){
-            unsigned long q = n / i;
-            unsigned long r = n % i;
+            uint64_t q = n / i;
+            uint64_t r = n % i;
             if (r != 0) break;
             factors.push_back(i);
             n = q;
@@ -27,7 +28,7 @@ inline void sqrt_fctr(unsigned long n, std::vector<unsigned long>& factors) noex
     if (n > 1) factors.push_back(n);
 }
 
-inline void wheel_sqrt_fctr(unsigned long n, std::vector<unsigned long>& factors) noexcept{
+inline void wheel_sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept{
     factors.clear();
     if (n <= 1) return;
 
@@ -41,7 +42,7 @@ inline void wheel_sqrt_fctr(unsigned long n, std::vector<unsigned long>& factors
     while (n % 13 == 0) { factors.push_back(13); n /= 13; }
     // factors.reserve(64);
 
-    static const unsigned long increments[] = 
+    static const uint64_t increments[] = 
     {2, 4, 6, 2, 6, 4, 2, 4, 6, 6, 2, 6, 4, 2, 6, 4, 6, 8, 4, 2, 4, 2, 4, 14, 4, 6, 2, 10, 2, 6, 
 6, 4, 6, 6, 2, 10, 2, 4, 2, 12, 12, 4, 2, 4, 6, 2, 10, 6, 6, 6, 2, 6, 4, 2, 10, 14, 4, 2, 4, 14, 
 6, 10, 2, 4, 6, 8, 6, 6, 4, 6, 8, 4, 8, 10, 2, 10, 2, 6, 4, 6, 8, 4, 2, 4, 12, 8, 4, 8, 4, 6, 
@@ -151,13 +152,13 @@ inline void wheel_sqrt_fctr(unsigned long n, std::vector<unsigned long>& factors
 6, 8, 16, 20, 4, 2, 10, 2, 10, 12, 6, 8, 6, 10, 20, 10, 18, 26, 4, 6, 30, 2, 4, 8, 6, 12, 12, 18, 4, 8, 
 22, 6, 2, 12, 34, 6, 18, 12, 6, 2, 28, 14, 16, 14, 4, 14, 12, 4, 6, 6, 2, 36, 4, 6, 20, 12, 24, 6, 22, 2, 
 16, 18};
-    unsigned long i = 17;
+    uint64_t i = 17;
     unsigned idx = 0;
 
     while (i * i < n){
         while (true){
-            unsigned long q = n / i;
-            unsigned long r = n % i;
+            uint64_t q = n / i;
+            uint64_t r = n % i;
             if (r != 0) break;
             factors.push_back(i);
             n = q;
