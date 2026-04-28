@@ -1,4 +1,3 @@
-#include <SDL2/SDL_rect.h>
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -8,9 +7,10 @@
 #include <numbers>
 #include <numeric>
 #include <ranges>
+#include <string>
 #include <utility>
 #include <vector>
-#include "SDL2/SDL.h"
+#include "raylib/include/raylib.h"
 
 // Тип комплексного числа
 using Complex = std::complex<double>;
@@ -71,13 +71,11 @@ std::vector<Epicycle> computeEpicycles(const Contour& contour, int M){
         #pragma clang loop vectorize(enable)
         for (int k = 0; k < N; ++k){
             double angle = pi2_N * n * k;
-
-            Complex w(std::cos(angle), std::sin(angle));
-
-            sum += contour[k] * w;
+            sum += contour[k] * Complex(std::cos(angle), std::sin(angle));
         }
-
-        epicycles.push_back({n, sum / static_cast<double>(N)});
+        
+        Complex c_n = sum / static_cast<double>(N);
+        epicycles.push_back({n, c_n, std::abs(c_n)});
     }
 
     std::ranges::sort(epicycles, std::ranges::greater{},[](const Epicycle& e) { return std::norm(e.coef); });
@@ -94,38 +92,26 @@ std::vector<Joint> calculateFrame(const std::vector<Epicycle>& epicycles, double
 
     const double pi2_t = 2.0 * std::numbers::pi * t;
 
+    const double angle = pi2_t * epicycles[0].freq;
+    vectors[0] = epicycles[0].coef * Complex(std::cos(angle), std::sin(angle));
+
     #pragma clang loop vectorize(enable)
-    for (size_t i = 0; i < n; ++i){
+    for (size_t i = 1; i < n; ++i){
         const double angle = pi2_t * epicycles[i].freq;
-
-        Complex rot(std::cos(angle), std::sin(angle));
-
-        vectors[i] = rot * epicycles[i].coef;
+        vectors[i] = vectors[i - 1] + epicycles[i].coef * Complex(std::cos(angle), std::sin(angle));
     }
 
-    std::vector<Joint> joints;
-    joints.reserve(n + 1);
+    std::vector<Joint> joints(n + 1);
 
-    Complex cur_pos(0.0, 0.0);
+    joints[0] = {{0.0, 0.0}, epicycles[0].radius};
 
-    for (size_t i = 0; i < n; ++i){
-        joints.push_back({cur_pos, epicycles[i].radius});
-        cur_pos += vectors[i];
+    for (size_t i = 1; i < n; ++i){
+        joints[i] = {vectors[i - 1], epicycles[i].radius};
     }
 
-    joints.push_back({cur_pos, 0.0});
+    joints[n] = {vectors.back(), 0.0};
 
     return joints;
-}
-
-void DrawCircle(SDL_Renderer* renderer, float cx, float cy, float radius) {
-    const int segments = 60;
-    std::vector<SDL_FPoint> points(segments + 1);
-    for (int i = 0; i <= segments; ++i) {
-        float theta = 2.0f * std::numbers::pi * float(i) / float(segments);
-        points[i] = { cx + radius * std::cos(theta), cy + radius * std::sin(theta) };
-    }
-    SDL_RenderDrawLinesF(renderer, points.data(), points.size());
 }
 
 std::vector<std::pair<double, double>> generateHeart() {
@@ -140,73 +126,94 @@ std::vector<std::pair<double, double>> generateHeart() {
     return points;
 }
 
-int main(){
-    constexpr double speed = 0.1;
-    // std::vector<std::pair<int, int>> raw_pixels = {{0, 0}, {10, 10}};
-    auto raw_pixels = generateHeart();
-    Contour contour = prepareContour(raw_pixels);
+bool DrawToggleButton(Rectangle bounds, const char* text, bool& state) {
+    Vector2 mouse = GetMousePosition();
+    bool hovered = CheckCollisionPointRec(mouse, bounds);
+    if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) state = !state;
+    
+    DrawRectangleRec(bounds, state ? (hovered ? DARKBLUE : BLUE) : (hovered ? LIGHTGRAY : GRAY));
+    DrawRectangleLinesEx(bounds, 2, BLACK);
+    int textWidth = MeasureText(text, 20);
+    DrawText(text, bounds.x + (bounds.width - textWidth)/2, bounds.y + 10, 20, WHITE);
+    return hovered;
+}
 
-    constexpr int M = 100;
+int main(){
+    constexpr int M = 10;
+    
+    auto raw_pixels = generateHeart();
+    auto contour = prepareContour(raw_pixels);
     auto epicycles = computeEpicycles(contour, M);
 
-    const int width = 1280;
-    const int height = 720;
-    SDL_Window* window = SDL_CreateWindow("Fourier Epicycles (SDL2)", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN);
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    constexpr int width = 1280;
+    constexpr int height = 720;
+    
+    // Настраиваем антиалиасинг, чтобы линии были гладкими
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
+    InitWindow(width, height, "Raylib Fourier Epicycles");
+    SetTargetFPS(240);
 
     double t = 0.0;
-    const double dt = 1.0 / contour.size();
-    std::vector<SDL_FPoint> trail;
-    float offsetX = width / 2.0f;
-    float offsetY = height / 2.0f;
-    bool running = true;
+    double dt = 1.0 / contour.size();
+    std::vector<Vector2> trail;
+    Vector2 offset = { width / 2.0f, height / 2.0f };
 
-    // 3. Главный цикл
-    while (running) {
-        
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) running = false;
-        }
+    // --- ПЕРЕМЕННЫЕ ИНТЕРФЕЙСА ---
+    bool showCircles = true;
+    bool showLines = true;
+    bool showTrail = true;
+    float speedMult = 0.5f; // Начальная скорость
 
-        // Обновление физики
+    while (!WindowShouldClose()) {
+        // Управление скоростью стрелочками ВВЕРХ / ВНИЗ
+        if (IsKeyPressed(KEY_UP)) speedMult += 0.05f;
+        if (IsKeyPressed(KEY_DOWN) && speedMult > 0.05) speedMult -= 0.05f;
+
+        // Физика
         auto joints = calculateFrame(epicycles, t);
-        if (!joints.empty()) {
-            trail.push_back({ (float)joints.back().pos.real() + offsetX, (float)joints.back().pos.imag() + offsetY });
+        if (!joints.empty() && showTrail && trail.size() < contour.size()) {
+            trail.push_back({ (float)joints.back().pos.real() + offset.x, (float)joints.back().pos.imag() + offset.y });
         }
 
-        t += dt * speed;
+        t += dt * speedMult;
         t -= (int)t;
 
         // Отрисовка
-        SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255); // Темно-серый фон
-        SDL_RenderClear(renderer);
+        BeginDrawing();
+        ClearBackground({20, 20, 20, 255}); // Темный фон
 
-        // Рисуем круги и линии (эпициклы)
-        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 200); // Полупрозрачный белый
+        // Рисуем эпициклы
         for (size_t i = 0; i < joints.size() - 1; ++i) {
-            float cx = joints[i].pos.real() + offsetX;
-            float cy = joints[i].pos.imag() + offsetY;
-            float nx = joints[i+1].pos.real() + offsetX;
-            float ny = joints[i+1].pos.imag() + offsetY;
-            
-            DrawCircle(renderer, cx, cy, joints[i].radius);
-            SDL_RenderDrawLineF(renderer, cx, cy, nx, ny);
+            Vector2 p1 = { (float)joints[i].pos.real() + offset.x, (float)joints[i].pos.imag() + offset.y };
+            Vector2 p2 = { (float)joints[i+1].pos.real() + offset.x, (float)joints[i+1].pos.imag() + offset.y };
+            float radius = (float)joints[i].radius;
+
+            // Рисуем круги только если радиус > 0.5 пикселя, иначе их всё равно не видно
+            if (showCircles && radius > 0.5f) {
+                DrawCircleLines(p1.x, p1.y, radius, Fade(WHITE, 0.2f));
+            }
+            if (showLines) {
+                DrawLineV(p1, p2, Fade(WHITE, 0.6f));
+            }
         }
 
-        // Рисуем след карандаша
-        if (trail.size() > 1) {
-            SDL_SetRenderDrawColor(renderer, 255, 50, 50, 255); // Ярко-красный
-            SDL_RenderDrawLinesF(renderer, trail.data(), trail.size());
+        // Рисуем след (polyline)
+        if (showTrail && trail.size() > 1) {
+            DrawLineStrip(trail.data(), trail.size(), RED);
         }
 
-        SDL_RenderPresent(renderer); // Вывод кадра
+        // --- ОТРИСОВКА UI ---
+        DrawToggleButton({20, 20, 140, 40}, "Circles", showCircles);
+        DrawToggleButton({170, 20, 140, 40}, "Lines", showLines);
+        DrawToggleButton({320, 20, 140, 40}, "Curve", showTrail);
+        
+        // Текст со скоростью
+        DrawText(TextFormat("Speed: %.2fx (Arrows UP/DOWN)", speedMult), 480, 30, 20, LIGHTGRAY);
+        DrawText(TextFormat("Points: %zu | M: %d", trail.size(), M), 20, height - 30, 20, DARKGRAY);
+
+        EndDrawing();
     }
 
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-
+    CloseWindow();
     return 0;
 }
