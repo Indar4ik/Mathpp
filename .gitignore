@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.pdb
+*.optrpt
 *_clang
 *_gcc
 *_icpx
