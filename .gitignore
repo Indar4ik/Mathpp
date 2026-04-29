@@ -5,6 +5,7 @@
 *.so
 *.pdb
 *.optrpt
+*.svg
 *_clang
 *_gcc
 *_icpx

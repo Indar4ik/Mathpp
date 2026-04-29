@@ -2,12 +2,11 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <numbers>
 #include <numeric>
-#include <ranges>
-#include <string>
+// #include <ranges>
+// #include <string>
 #include <utility>
 #include <vector>
 #include "raylib/include/raylib.h"
@@ -20,7 +19,7 @@ using Contour = std::vector<Complex>;
 
 // Член ряда
 struct Epicycle {
-    int freq; // Показатель экспоненты, характеризующий частоту вращения
+    double freq; // Показатель экспоненты, характеризующий частоту вращения
     Complex coef; // Комплексный коэффициент (амплитуда и фаза)
     double radius;
 };
@@ -32,7 +31,7 @@ struct Joint {
 };
 
 // Массив точек с изображения -> комплексный контур, центрированный на (0, 0)
-Contour prepareContour(const std::vector<std::pair<double, double>>& raw_points) noexcept{
+Contour prepareContour(const std::vector<std::pair<int, int>>& raw_points) noexcept{
     if (raw_points.empty()) return {};
 
     const size_t n = raw_points.size();
@@ -48,7 +47,7 @@ Contour prepareContour(const std::vector<std::pair<double, double>>& raw_points)
 
     for (auto& z : contour){
         z -= center;
-        // z = Complex(z.real(), -z.imag());
+        z = Complex(z.real(), -z.imag());
     }
 
     return contour;
@@ -56,7 +55,7 @@ Contour prepareContour(const std::vector<std::pair<double, double>>& raw_points)
 
 // Частоты ∊ [-M; M]
 // Всего будет вычислено 2M+1 эпициклов
-std::vector<Epicycle> computeEpicycles(const Contour& contour, int M){
+std::vector<Epicycle> computeEpicycles(const Contour& contour, int M) noexcept{
     const int N = contour.size();
     if (N == 0) return {};
 
@@ -69,13 +68,13 @@ std::vector<Epicycle> computeEpicycles(const Contour& contour, int M){
         Complex sum(0.0, 0.0);
 
         #pragma clang loop vectorize(enable)
-        for (int k = 0; k < N; ++k){
+        for (size_t k = 0; k < N; ++k){
             double angle = pi2_N * n * k;
             sum += contour[k] * Complex(std::cos(angle), std::sin(angle));
         }
         
         Complex c_n = sum / static_cast<double>(N);
-        epicycles.push_back({n, c_n, std::abs(c_n)});
+        epicycles.push_back({static_cast<double>(n), c_n, std::abs(c_n)});
     }
 
     std::ranges::sort(epicycles, std::ranges::greater{},[](const Epicycle& e) { return std::norm(e.coef); });
@@ -83,7 +82,7 @@ std::vector<Epicycle> computeEpicycles(const Contour& contour, int M){
     return epicycles;
 }
 
-std::vector<Joint> calculateFrame(const std::vector<Epicycle>& epicycles, double t){
+std::vector<Joint> calculateFrame(const std::vector<Epicycle>& epicycles, double t) noexcept{
     if (epicycles.empty()) return {};
 
     const size_t n = epicycles.size();
@@ -92,36 +91,39 @@ std::vector<Joint> calculateFrame(const std::vector<Epicycle>& epicycles, double
 
     const double pi2_t = 2.0 * std::numbers::pi * t;
 
-    const double angle = pi2_t * epicycles[0].freq;
-    vectors[0] = epicycles[0].coef * Complex(std::cos(angle), std::sin(angle));
-
     #pragma clang loop vectorize(enable)
-    for (size_t i = 1; i < n; ++i){
-        const double angle = pi2_t * epicycles[i].freq;
-        vectors[i] = vectors[i - 1] + epicycles[i].coef * Complex(std::cos(angle), std::sin(angle));
+    for (size_t i = 0; i < n; ++i){
+        double angle = pi2_t * epicycles[i].freq;
+        
+        double c = std::cos(angle);
+        double s = std::sin(angle);
+
+        double re = epicycles[i].coef.real();
+        double im = epicycles[i].coef.imag();
+
+        vectors[i] = Complex(re * c - im * s, re * s + im * c);
     }
 
     std::vector<Joint> joints(n + 1);
 
-    joints[0] = {{0.0, 0.0}, epicycles[0].radius};
-
-    for (size_t i = 1; i < n; ++i){
-        joints[i] = {vectors[i - 1], epicycles[i].radius};
+    Complex cur_point = {0.0, 0.0};
+    for (size_t i = 0; i < n; ++i){
+        joints[i] = {cur_point, epicycles[i].radius};
+        cur_point += vectors[i];
     }
-
     joints[n] = {vectors.back(), 0.0};
 
     return joints;
 }
 
-std::vector<std::pair<double, double>> generateHeart() {
-    std::vector<std::pair<double, double>> points;
+std::vector<std::pair<int, int>> generateHeart() {
+    std::vector<std::pair<int, int>> points;
     for (double t = 0; t < 2 * std::numbers::pi; t += 0.02) {
         // Формула сердечка
-        double x = 16 * std::pow(std::sin(t), 3);
-        double y = -(13 * std::cos(t) - 5 * std::cos(2*t) - 2 * std::cos(3*t) - std::cos(4*t));
+        double x = 240 * std::pow(std::sin(t), 5);
+        double y = 15 * (13 * std::cos(t) - 5 * std::cos(2*t) - 2 * std::cos(3*t) - std::cos(4*t));
         // Масштабируем
-        points.push_back({x * 15, y * 10});
+        points.push_back({(int)x, (int)y});
     }
     return points;
 }
@@ -139,9 +141,10 @@ bool DrawToggleButton(Rectangle bounds, const char* text, bool& state) {
 }
 
 int main(){
-    constexpr int M = 10;
+    constexpr int M = 200;
     
-    auto raw_pixels = generateHeart();
+    const std::vector<std::pair<int, int>> raw_pixels = generateHeart();
+    const double pixels_count = raw_pixels.size();
     auto contour = prepareContour(raw_pixels);
     auto epicycles = computeEpicycles(contour, M);
 
@@ -154,7 +157,7 @@ int main(){
     SetTargetFPS(240);
 
     double t = 0.0;
-    double dt = 1.0 / contour.size();
+    const double dt = 1.0 / pixels_count;
     std::vector<Vector2> trail;
     Vector2 offset = { width / 2.0f, height / 2.0f };
 
@@ -162,16 +165,16 @@ int main(){
     bool showCircles = true;
     bool showLines = true;
     bool showTrail = true;
-    float speedMult = 0.5f; // Начальная скорость
+    double speedMult = 0.25; // Начальная скорость
 
     while (!WindowShouldClose()) {
         // Управление скоростью стрелочками ВВЕРХ / ВНИЗ
-        if (IsKeyPressed(KEY_UP)) speedMult += 0.05f;
-        if (IsKeyPressed(KEY_DOWN) && speedMult > 0.05) speedMult -= 0.05f;
+        if (IsKeyPressed(KEY_UP)) speedMult += 0.05;
+        if (IsKeyPressed(KEY_DOWN) && speedMult > 0.05) speedMult -= 0.05;
 
         // Физика
         auto joints = calculateFrame(epicycles, t);
-        if (!joints.empty() && showTrail && trail.size() < contour.size()) {
+        if (!joints.empty() && showTrail && (speedMult * trail.size() < pixels_count)) {
             trail.push_back({ (float)joints.back().pos.real() + offset.x, (float)joints.back().pos.imag() + offset.y });
         }
 
