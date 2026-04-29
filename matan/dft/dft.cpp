@@ -100,10 +100,10 @@ std::vector<Epicycle> computeEpicycles(const Contour& contour, int M) noexcept{
     return epicycles;
 }
 
-void calculateFrame(const std::vector<Epicycle>& epicycles, double t, std::vector<Complex>& vectors, std::vector<Joint> joints) noexcept{
+void calculateFrame(const std::vector<Epicycle>& epicycles, double t, std::vector<Complex>& vectors, std::vector<Joint>& joints) noexcept{
     if (epicycles.empty()) return;
-    [[assume(epicycles.size() == vectors.size())]];
-    [[assume(epicycles.size() + 1 == joints.size())]];
+    // [[assume(epicycles.size() == vectors.size())]];
+    // [[assume(epicycles.size() + 1 == joints.size())]];
 
     const size_t n = epicycles.size();
 
