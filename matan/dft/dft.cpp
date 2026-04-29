@@ -120,7 +120,7 @@ std::vector<std::pair<int, int>> generateHeart() {
     std::vector<std::pair<int, int>> points;
     for (double t = 0; t < 2 * std::numbers::pi; t += 0.02) {
         // Формула сердечка
-        double x = 240 * std::pow(std::sin(t), 5);
+        double x = 240 * std::pow(std::sin(t), 3);
         double y = 15 * (13 * std::cos(t) - 5 * std::cos(2*t) - 2 * std::cos(3*t) - std::cos(4*t));
         // Масштабируем
         points.push_back({(int)x, (int)y});
@@ -141,15 +141,20 @@ bool DrawToggleButton(Rectangle bounds, const char* text, bool& state) {
 }
 
 int main(){
-    constexpr int M = 200;
-    
+    constexpr int M = 5;
+    constexpr int width = 1280;
+    constexpr int height = 720;
+    constexpr Vector2 offset = { width / 2.0f, height / 2.0f };
+
     const std::vector<std::pair<int, int>> raw_pixels = generateHeart();
     const double pixels_count = raw_pixels.size();
     auto contour = prepareContour(raw_pixels);
+    std::vector<Vector2> vec_pixels;
+    vec_pixels.reserve(raw_pixels.size());
+    for (auto& pix : contour){
+        vec_pixels.push_back(Vector2((float)pix.real() + offset.x, (float)pix.imag() + offset.y));
+    }
     auto epicycles = computeEpicycles(contour, M);
-
-    constexpr int width = 1280;
-    constexpr int height = 720;
     
     // Настраиваем антиалиасинг, чтобы линии были гладкими
     SetConfigFlags(FLAG_MSAA_4X_HINT);
@@ -159,7 +164,6 @@ int main(){
     double t = 0.0;
     const double dt = 1.0 / pixels_count;
     std::vector<Vector2> trail;
-    Vector2 offset = { width / 2.0f, height / 2.0f };
 
     // --- ПЕРЕМЕННЫЕ ИНТЕРФЕЙСА ---
     bool showCircles = true;
@@ -204,6 +208,9 @@ int main(){
         if (showTrail && trail.size() > 1) {
             DrawLineStrip(trail.data(), trail.size(), RED);
         }
+
+        // Силуэт реальной кривой
+        DrawLineStrip(vec_pixels.data(), vec_pixels.size(), {0, 0, 255, 100});
 
         // --- ОТРИСОВКА UI ---
         DrawToggleButton({20, 20, 140, 40}, "Circles", showCircles);
