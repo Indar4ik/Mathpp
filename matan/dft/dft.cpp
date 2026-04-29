@@ -5,6 +5,7 @@
 #include <functional>
 #include <numbers>
 #include <numeric>
+#include <print>
 // #include <ranges>
 // #include <string>
 #include <utility>
@@ -74,6 +75,7 @@ std::vector<Epicycle> computeEpicycles(const Contour& contour, int M) noexcept{
         }
         
         Complex c_n = sum / static_cast<double>(N);
+        std::println("c_{}: {}", n, std::abs(c_n));
         epicycles.push_back({static_cast<double>(n), c_n, std::abs(c_n)});
     }
 
@@ -123,6 +125,7 @@ std::vector<std::pair<int, int>> generateHeart() {
         double x = 240 * std::pow(std::sin(t), 3);
         double y = 15 * (13 * std::cos(t) - 5 * std::cos(2*t) - 2 * std::cos(3*t) - std::cos(4*t));
         // Масштабируем
+        std::print("({:.4f}, {:.4f}) ", x, y);
         points.push_back({(int)x, (int)y});
     }
     return points;
@@ -174,7 +177,7 @@ int main(){
     while (!WindowShouldClose()) {
         // Управление скоростью стрелочками ВВЕРХ / ВНИЗ
         if (IsKeyPressed(KEY_UP)) speedMult += 0.05;
-        if (IsKeyPressed(KEY_DOWN) && speedMult > 0.05) speedMult -= 0.05;
+        if (IsKeyPressed(KEY_DOWN) && speedMult > 0.06) speedMult -= 0.05;
 
         // Физика
         auto joints = calculateFrame(epicycles, t);
