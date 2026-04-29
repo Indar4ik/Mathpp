@@ -106,12 +106,12 @@ std::vector<Joint> calculateFrame(const std::vector<Epicycle>& epicycles, double
 
     std::vector<Joint> joints(n + 1);
 
-    Complex cur_point = {0.0, 0.0};
+    Complex cur_pos = {0.0, 0.0};
     for (size_t i = 0; i < n; ++i){
-        joints[i] = {cur_point, epicycles[i].radius};
-        cur_point += vectors[i];
+        joints[i] = {cur_pos, epicycles[i].radius};
+        cur_pos += vectors[i];
     }
-    joints[n] = {vectors.back(), 0.0};
+    joints[n] = {cur_pos, 0.0};
 
     return joints;
 }
