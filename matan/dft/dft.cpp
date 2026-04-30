@@ -251,7 +251,7 @@ int main(){
         DrawToggleButton({20, 20, 140, 40}, "Circles", showCircles);
         DrawToggleButton({170, 20, 140, 40}, "Lines", showLines);
         DrawToggleButton({320, 20, 140, 40}, "Curve", showTrail);
-        DrawToggleButton({470, 20, 140, 40}, "Curve", showOutline);
+        DrawToggleButton({470, 20, 140, 40}, "Outline", showOutline);
         DrawClearButton({620, 20, 140, 40}, "Clear", trail);
         
         // Текст со скоростью
