@@ -14,6 +14,7 @@ compile_flags.txt
 number_theory/factorization/primes2^30.txt
 number_theory/factorization/primes_gen.cpp
 number_theory/modular_arithmetic/inv_mod.cpp
+matan/dft/photo.png
 
 build/
 out/

@@ -6,8 +6,8 @@
 #include <numbers>
 #include <numeric>
 #include <print>
-// #include <ranges>
-// #include <string>
+#include <ranges>
+#include <string>
 #include <utility>
 #include <vector>
 #include "raylib/include/raylib.h"
