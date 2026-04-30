@@ -27,7 +27,7 @@ while True:
             # Сохраняем и выходим
             with open(OUTPUT_FILE, "w") as f:
                 for p in points:
-                    f.write(f"{p[0]} {p[1]}\n")
+                    f.write(f"{{{p[0]}, {p[1]}}}, ")
             pygame.quit()
             sys.exit()
             
