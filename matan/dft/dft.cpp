@@ -15,8 +15,9 @@
 #include "raylib/include/raylib.h"
 
 // Максимальная частота эпицикла
-constexpr int M = 5;
+constexpr int M = 200;
 constexpr size_t NUM_EPICYCLES = 2 * M + 1;
+constexpr size_t AMORTIZATION_COUNT = 10;
 
 // Тип комплексного числа
 using Complex = std::complex<double>;
@@ -45,29 +46,50 @@ using JointArray = std::array<Joint, NUM_EPICYCLES>;
 Contour prepareContour(const std::vector<std::pair<int, int>>& raw_points) noexcept{
     if (raw_points.empty()) return {};
 
-    const size_t n = raw_points.size();
     Contour contour;
-    contour.reserve(n);
+    contour.reserve(raw_points.size());
+
+    for (const auto& pt : raw_points){
+        contour.emplace_back(static_cast<double>(pt.first), static_cast<double>(pt.second));
+    }
+
+    return contour;
+}
+
+void contourAmortization(Contour& contour){
+    if (contour.empty()) return;
+
+    const size_t n = contour.size();
+    contour.resize(2 * n - 1);
+    
+    contour.back() = contour[n - 1];
+    for (size_t i = n - 1; i > 0; --i){
+        Complex mid = (contour[i] + contour[i - 1]) * 0.5;
+        contour[2 * i - 1] = mid;
+        contour[2 * i - 2] = contour[i - 1];
+    }
+}
+
+void centerContour(Contour& contour) noexcept {
+    const size_t N = contour.size();
+    if (N == 0) return;
 
     double sum_re = 0.0;
     double sum_im = 0.0;
 
-    for (const auto& pt : raw_points){
-        double re = static_cast<double>(pt.first);
-        double im = static_cast<double>(pt.second);
-        contour.emplace_back(re, im);
-        sum_re += re;
-        sum_im += im;
+    #pragma clang loop vectorize(enable)
+    for (size_t i = 0; i < N; ++i) {
+        sum_re += contour[i].real();
+        sum_im += contour[i].imag();
     }
 
-    Complex center(sum_re / n, sum_im / n);
+    double center_re = sum_re / static_cast<double>(N);
+    double center_im = sum_im / static_cast<double>(N);
 
-    for (auto& z : contour){
-        z -= center;
-        z = Complex(z.real(), -z.imag());
+    #pragma clang loop vectorize(enable)
+    for (size_t i = 0; i < N; ++i) {
+        contour[i] = Complex(contour[i].real() - center_re, contour[i].imag() - center_im);
     }
-
-    return contour;
 }
 
 // Частоты ∊ [-M; M]
@@ -99,7 +121,7 @@ EpicycleArray computeEpicycles(const Contour& contour) noexcept{
         }
         
         Complex c_n(sum_re / N, sum_im / N);
-        // std::println("c_{}: {}", n, std::abs(c_n));
+        // std::println("c_{}: {:.5f}", n, std::abs(c_n));
         epicycles[n + M] = {static_cast<double>(n), c_n, std::abs(c_n)};
     }
 
@@ -204,9 +226,12 @@ int main(){
     const double pixels_count = static_cast<double>(raw_pixels.size());
 
     auto contour = prepareContour(raw_pixels);
+    contour.reserve(((contour.size() - 1) << AMORTIZATION_COUNT) + 1);
+    for (size_t i = 0; i < AMORTIZATION_COUNT; ++i) contourAmortization(contour);
+    centerContour(contour);
 
     std::vector<Vector2> vec_pixels;
-    vec_pixels.reserve(raw_pixels.size());
+    vec_pixels.reserve(contour.size());
     for (const auto& pix : contour){
         vec_pixels.push_back(Vector2(static_cast<float>(pix.real()) + offset.x, static_cast<float>(pix.imag()) + offset.y));
     }
@@ -231,12 +256,12 @@ int main(){
     bool showLines = true;
     bool showTrail = true;
     bool showOutline = true;
-    double speedMult = 0.2; // Начальная скорость
+    double speedMult = 0.004; // Начальная скорость
 
     while (!WindowShouldClose()) {
         // Управление скоростью стрелочками ВВЕРХ / ВНИЗ
-        if (IsKeyPressed(KEY_UP)) speedMult += 0.05;
-        if (IsKeyPressed(KEY_DOWN) && speedMult > 0.06) speedMult -= 0.05;
+        if (IsKeyPressed(KEY_UP)) speedMult += 0.02;
+        if (IsKeyPressed(KEY_DOWN) && speedMult > 0.03) speedMult -= 0.02;
 
         // Физика
         calculateFrame(epicycles, t, frame_vectors, frame_joints);
