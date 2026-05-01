@@ -11,9 +11,11 @@ int main(){
     std::cin >> n; // Количество чисел в колесе
     // Колесо с базисом длины n будет пропускать (1 - phi(p_n#)/p_n#) * 100% чисел, где phi - функция Эйлера, p_n# - примориал n-ого простого числа
     // Выражение стремится к 100% (потому что на бесконечности плотность простых бесконечно мала), но размер массива офсетов растёт грубо как n^n
+    double checked_fraction = 1.0;
 
     for (const uint32_t& prime : firstNprimes(n)){
         p *= prime;
+        checked_fraction *= (1.0 - (1.0 / static_cast<double>(prime)));
     }
 
     std::vector<uint32_t> primes_to_p = sieve(p + 1);
@@ -26,7 +28,8 @@ int main(){
 
     std::println("i = {}", primes_to_p[n]);
     std::println("idx = (idx + 1) % {}", primes_to_p.size() - n);
-    std::println("p={}", p);
+    std::println("p = {}", p);
+    std::println("checked fraction = {:.5f}", checked_fraction);
 
     return 0;
 }
