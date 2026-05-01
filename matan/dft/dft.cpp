@@ -42,8 +42,8 @@ using EpicycleArray = std::array<Epicycle, NUM_EPICYCLES>;
 using VectorArray = std::array<Complex, NUM_EPICYCLES>;
 using JointArray = std::array<Joint, NUM_EPICYCLES>;
 
-// Массив точек с изображения -> комплексный контур, центрированный на (0, 0)
-Contour prepareContour(const std::vector<std::pair<int, int>>& raw_points) noexcept{
+// Массив точек с изображения -> комплексный контур
+Contour prepareContour(const std::vector<std::pair<int, int>>& raw_points) noexcept {
     if (raw_points.empty()) return {};
 
     Contour contour;
@@ -56,7 +56,8 @@ Contour prepareContour(const std::vector<std::pair<int, int>>& raw_points) noexc
     return contour;
 }
 
-void contourAmortization(Contour& contour){
+// Вставляет между каждой парой подряд идущих точек их среднее значение
+void contourAmortization(Contour& contour) noexcept {
     if (contour.empty()) return;
 
     const size_t n = contour.size();
@@ -70,6 +71,7 @@ void contourAmortization(Contour& contour){
     }
 }
 
+// Центрирует контур в (0, 0)
 void centerContour(Contour& contour) noexcept {
     const size_t N = contour.size();
     if (N == 0) return;
@@ -94,7 +96,7 @@ void centerContour(Contour& contour) noexcept {
 
 // Частоты ∊ [-M; M]
 // Всего будет вычислено 2M+1 эпициклов
-EpicycleArray computeEpicycles(const Contour& contour) noexcept{
+EpicycleArray computeEpicycles(const Contour& contour) noexcept {
     const size_t N = contour.size();
     EpicycleArray epicycles;
     if (N == 0) return {};
@@ -130,7 +132,8 @@ EpicycleArray computeEpicycles(const Contour& contour) noexcept{
     return epicycles;
 }
 
-void calculateFrame(EpicycleArray& epicycles, double t, VectorArray& vectors, JointArray& joints) noexcept{
+// Расчёт радиусов и позиций окружностей и векторов
+void calculateFrame(EpicycleArray& epicycles, double t, VectorArray& vectors, JointArray& joints) noexcept {
     if (epicycles.empty()) return;
 
     const double pi2_t = 2.0 * std::numbers::pi * t;
@@ -158,20 +161,19 @@ void calculateFrame(EpicycleArray& epicycles, double t, VectorArray& vectors, Jo
     joints[NUM_EPICYCLES] = {cur_pos, 0.0};
 }
 
-std::vector<std::pair<int, int>> generateHeart() {
+std::vector<std::pair<int, int>> generateHeart() noexcept {
     std::vector<std::pair<int, int>> points;
     for (double t = 0; t < 2 * std::numbers::pi; t += 0.02) {
         // Формула сердечка
         double x = 240 * std::pow(std::sin(t), 3);
         double y = 15 * (13 * std::cos(t) - 5 * std::cos(2*t) - 2 * std::cos(3*t) - std::cos(4*t));
-        // Масштабируем
-        std::print("({:.4f}, {:.4f}) ", x, y);
+        // std::print("({:.4f}, {:.4f}) ", x, y);
         points.push_back({(int)x, (int)y});
     }
     return points;
 }
 
-std::vector<std::pair<int, int>> loadPoints(const std::string& filename){
+std::vector<std::pair<int, int>> loadPoints(const std::string& filename) noexcept {
     std::vector<std::pair<int, int>> points;
     std::ifstream file(filename);
 
@@ -191,7 +193,7 @@ std::vector<std::pair<int, int>> loadPoints(const std::string& filename){
     return points;
 }
 
-bool DrawToggleButton(Rectangle bounds, const char* text, bool& state) {
+bool DrawToggleButton(Rectangle bounds, const char* text, bool& state) noexcept {
     Vector2 mouse = GetMousePosition();
     bool hovered = CheckCollisionPointRec(mouse, bounds);
     if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) state = !state;
@@ -203,7 +205,7 @@ bool DrawToggleButton(Rectangle bounds, const char* text, bool& state) {
     return hovered;
 }
 
-bool DrawClearButton(Rectangle bounds, const char* text, std::vector<Vector2>& vec) {
+bool DrawClearButton(Rectangle bounds, const char* text, std::vector<Vector2>& vec) noexcept {
     Vector2 mouse = GetMousePosition();
     bool hovered = CheckCollisionPointRec(mouse, bounds);
     if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) vec.clear();
@@ -226,6 +228,8 @@ int main(){
     const double pixels_count = static_cast<double>(raw_pixels.size());
 
     auto contour = prepareContour(raw_pixels);
+
+    // Резервирование сразу под все амортизации
     contour.reserve(((contour.size() - 1) << AMORTIZATION_COUNT) + 1);
     for (size_t i = 0; i < AMORTIZATION_COUNT; ++i) contourAmortization(contour);
     centerContour(contour);
