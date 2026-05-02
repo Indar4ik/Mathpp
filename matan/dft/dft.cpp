@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -15,9 +16,10 @@
 #include "raylib/include/raylib.h"
 
 // Максимальная частота эпицикла
-constexpr int M = 200;
+constexpr int M = 300;
 constexpr size_t NUM_EPICYCLES = 2 * M + 1;
 constexpr size_t AMORTIZATION_COUNT = 10;
+constexpr double AMORTIZATION_DEEP_INV = std::bit_cast<double>((1023 - AMORTIZATION_COUNT) << 52);
 
 // Тип комплексного числа
 using Complex = std::complex<double>;
@@ -56,18 +58,23 @@ Contour prepareContour(const std::vector<std::pair<int, int>>& raw_points) noexc
     return contour;
 }
 
-// Вставляет между каждой парой подряд идущих точек их среднее значение
+// Вставляет между каждой парой подряд идущих точек их 2^(AMORTIZATION_COUNT)-1 средних значений
 void contourAmortization(Contour& contour) noexcept {
     if (contour.empty()) return;
 
     const size_t n = contour.size();
-    contour.resize(2 * n - 1);
+    contour.resize(((contour.size() - 1) << AMORTIZATION_COUNT) + 1);
     
     contour.back() = contour[n - 1];
     for (size_t i = n - 1; i > 0; --i){
-        Complex mid = (contour[i] + contour[i - 1]) * 0.5;
-        contour[2 * i - 1] = mid;
-        contour[2 * i - 2] = contour[i - 1];
+        Complex x = contour[i - 1];
+        const Complex add = (contour[i] - x) * AMORTIZATION_DEEP_INV;
+
+        #pragma clang loop unroll(full)
+        for (size_t j = 0; j < (1 << AMORTIZATION_COUNT); ++j){
+            contour[((i - 1) << AMORTIZATION_COUNT) + j] = x;
+            x += add;
+        }
     }
 }
 
@@ -103,7 +110,7 @@ EpicycleArray computeEpicycles(const Contour& contour) noexcept {
 
     const double pi2_N = -2.0 * std::numbers::pi / N;
 
-    #pragma clang unroll(full)
+    #pragma clang loop unroll(full)
     for (int n = -M; n <= M; ++n) {
         double sum_re = 0.0;
         double sum_im = 0.0;
@@ -229,9 +236,8 @@ int main(){
 
     auto contour = prepareContour(raw_pixels);
 
-    // Резервирование сразу под все амортизации
-    contour.reserve(((contour.size() - 1) << AMORTIZATION_COUNT) + 1);
-    for (size_t i = 0; i < AMORTIZATION_COUNT; ++i) contourAmortization(contour);
+    // Амортизация + центрирование
+    contourAmortization(contour);
     centerContour(contour);
 
     std::vector<Vector2> vec_pixels;
