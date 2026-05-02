@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-inline void sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept{
+inline void sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept {
     factors.clear();
     if (n <= 1) return;
 
