@@ -21,9 +21,7 @@ int main(){
     std::vector<uint32_t> primes_to_p = sieve(p + 1);
 
     std::print("{{");
-    for (uint32_t i = n + 1; i < primes_to_p.size(); ++i){
-        std::print("{}, ", primes_to_p[i] - primes_to_p[i - 1]);
-    }
+    for (uint32_t i = n + 1; i < primes_to_p.size(); ++i) std::print("{}, ", primes_to_p[i] - primes_to_p[i - 1]);
     std::println("{}}}", p + primes_to_p[n] - primes_to_p.back());
 
     std::println("i = {}", primes_to_p[n]);

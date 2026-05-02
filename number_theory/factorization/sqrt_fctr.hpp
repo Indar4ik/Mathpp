@@ -9,31 +9,6 @@ inline void sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept{
 
     int twos = std::countr_zero(n);
     n >>= twos;
-    for (int i = 0; i < twos; ++i) factors.push_back(2UL);
-    // factors.reserve(64);
-
-    for (uint64_t i = 3; i * i <= n; i += 2){
-        // while (n % i == 0){
-        //     factors.push_back(i);
-        //     n /= i;
-        // }
-        while (true){
-            uint64_t q = n / i;
-            uint64_t r = n % i;
-            if (r != 0) break;
-            factors.push_back(i);
-            n = q;
-        }
-    }
-    if (n > 1) factors.push_back(n);
-}
-
-inline void wheel_sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept{
-    factors.clear();
-    if (n <= 1) return;
-
-    int twos = std::countr_zero(n);
-    n >>= twos;
     for (int i = 0; i < twos; ++i) factors.push_back(2);
     while (n % 3 == 0) { factors.push_back(3); n /= 3; }
     while (n % 5 == 0) { factors.push_back(5); n /= 5; }
@@ -42,7 +17,7 @@ inline void wheel_sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept
     while (n % 13 == 0) { factors.push_back(13); n /= 13; }
     // factors.reserve(64);
 
-    static const uint64_t increments[] = 
+    static constexpr uint64_t increments[] = 
     {2, 4, 6, 2, 6, 4, 2, 4, 6, 6, 2, 6, 4, 2, 6, 4, 6, 8, 4, 2, 4, 2, 4, 14, 4, 6, 2, 10, 2, 6, 
 6, 4, 6, 6, 2, 10, 2, 4, 2, 12, 12, 4, 2, 4, 6, 2, 10, 6, 6, 6, 2, 6, 4, 2, 10, 14, 4, 2, 4, 14, 
 6, 10, 2, 4, 6, 8, 6, 6, 4, 6, 8, 4, 8, 10, 2, 10, 2, 6, 4, 6, 8, 4, 2, 4, 12, 8, 4, 8, 4, 6, 
