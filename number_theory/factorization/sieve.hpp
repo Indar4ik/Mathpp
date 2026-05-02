@@ -5,6 +5,16 @@
 #include <vector>
 #include <ranges>
 
+// idx: value
+// 0: 4
+// 1: 2
+// 2: 4
+// 3: 2
+// 4: 4
+// 5: 6
+// 6: 2
+// 7: 6
+
 inline uint32_t idx_to_x (uint32_t idx) noexcept {
     return (0x62642424U >> ((idx & 7) << 2)) & 15;
 }
