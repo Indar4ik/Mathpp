@@ -7,6 +7,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <mkl.h>
 #include <numbers>
 #include <numeric>
 #include <print>
@@ -20,7 +21,7 @@
 constexpr int M = 300;
 constexpr size_t NUM_EPICYCLES = 2 * M + 1;
 constexpr size_t AMORTIZATION_COUNT = 10;
-constexpr double AMORTIZATION_DEEP_INV = std::bit_cast<double>((1023 - AMORTIZATION_COUNT) << 52);
+constexpr double AMORTIZATION_DEEP_INV = 1.0 / static_cast<double>(1ULL << AMORTIZATION_COUNT);
 
 // Тип комплексного числа
 using Complex = std::complex<double>;
@@ -43,7 +44,7 @@ struct Joint {
 
 using EpicycleArray = std::array<Epicycle, NUM_EPICYCLES>;
 using VectorArray = std::array<Complex, NUM_EPICYCLES>;
-using JointArray = std::array<Joint, NUM_EPICYCLES>;
+using JointArray = std::array<Joint, NUM_EPICYCLES + 1>;
 
 // Массив точек с изображения -> комплексный контур
 Contour prepareContour(const std::vector<std::pair<int, int>>& raw_points) noexcept {
@@ -238,7 +239,7 @@ int main(){
     auto contour = prepareContour(raw_pixels);
 
     // Амортизация + центрирование
-    contourAmortization(contour);
+    if (AMORTIZATION_COUNT > 0) contourAmortization(contour);
     centerContour(contour);
 
     std::vector<Vector2> vec_pixels;
@@ -267,12 +268,13 @@ int main(){
     bool showLines = true;
     bool showTrail = true;
     bool showOutline = true;
-    double speedMult = 0.004; // Начальная скорость
+    double speedMult = 0.2; // Начальная скорость
 
     while (!WindowShouldClose()) {
         // Управление скоростью стрелочками ВВЕРХ / ВНИЗ
         if (IsKeyPressed(KEY_UP)) speedMult += 0.02;
         if (IsKeyPressed(KEY_DOWN) && speedMult > 0.03) speedMult -= 0.02;
+        if (IsKeyPressed(KEY_S)) speedMult = 0.004;
 
         // Физика
         calculateFrame(epicycles, t, frame_vectors, frame_joints);
@@ -288,7 +290,7 @@ int main(){
         ClearBackground({20, 20, 20, 255}); // Темный фон
 
         // Рисуем эпициклы
-        for (size_t i = 0; i < NUM_EPICYCLES - 1; ++i) {
+        for (size_t i = 0; i < NUM_EPICYCLES; ++i) {
             Vector2 p1 = { static_cast<float>(frame_joints[i].pos.real()) + offset.x, static_cast<float>(frame_joints[i].pos.imag()) + offset.y };
             Vector2 p2 = { static_cast<float>(frame_joints[i+1].pos.real()) + offset.x, static_cast<float>(frame_joints[i+1].pos.imag()) + offset.y };
             float radius = static_cast<float>(frame_joints[i].radius);
