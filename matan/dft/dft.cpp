@@ -57,6 +57,9 @@ Contour prepareContour(const std::vector<std::pair<int, int>>& raw_points) noexc
         contour.emplace_back(static_cast<double>(pt.first), static_cast<double>(pt.second));
     }
 
+    // Замыкаем контур
+    if(raw_points.back() != raw_points.front()) contour.emplace_back(static_cast<double>(raw_points.front().first), static_cast<double>(raw_points.front().second));
+
     return contour;
 }
 
