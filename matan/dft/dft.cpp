@@ -7,7 +7,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
-#include <mkl.h>
+//#include <mkl.h>
 #include <numbers>
 #include <numeric>
 #include <print>
@@ -15,10 +15,10 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include "raylib/include/raylib.h"
+#include <raylib.h>
 
 // Максимальная частота эпицикла
-constexpr int M = 300;
+constexpr int M = 400;
 constexpr size_t NUM_EPICYCLES = 2 * M + 1;
 constexpr size_t AMORTIZATION_COUNT = 10;
 constexpr double AMORTIZATION_DEEP_INV = 1.0 / static_cast<double>(1ULL << AMORTIZATION_COUNT);
