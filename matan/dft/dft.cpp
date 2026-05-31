@@ -1,17 +1,14 @@
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstddef>
 #include <fstream>
 #include <functional>
 #include <iostream>
-//#include <mkl.h>
+// #include <mkl.h>
 #include <numbers>
-#include <numeric>
-#include <print>
-#include <ranges>
+// #include <print>
 #include <string>
 #include <utility>
 #include <vector>
@@ -57,7 +54,7 @@ Contour prepareContour(const std::vector<std::pair<int, int>>& raw_points) noexc
         contour.emplace_back(static_cast<double>(pt.first), static_cast<double>(pt.second));
     }
 
-    // Замыкаем контур
+    // Замыкание контура
     if(raw_points.back() != raw_points.front()) contour.emplace_back(static_cast<double>(raw_points.front().first), static_cast<double>(raw_points.front().second));
 
     return contour;
@@ -75,7 +72,7 @@ void contourAmortization(Contour& contour) noexcept {
         Complex x = contour[i - 1];
         const Complex add = (contour[i] - x) * AMORTIZATION_DEEP_INV;
 
-        #pragma clang loop unroll(full)
+        #pragma clang loop unroll(full) vectorize(enable)
         for (size_t j = 0; j < (1 << AMORTIZATION_COUNT); ++j){
             contour[((i - 1) << AMORTIZATION_COUNT) + j] = x;
             x += add;
@@ -112,13 +109,16 @@ EpicycleArray computeEpicycles(const Contour& contour) noexcept {
     const size_t N = contour.size();
     EpicycleArray epicycles;
     if (N == 0) return {};
+    epicycles[0] = {0, 0, 0};
 
     const double pi2_N = -2.0 * std::numbers::pi / N;
 
     #pragma clang loop unroll(full)
-    for (int n = -M; n <= M; ++n) {
-        double sum_re = 0.0;
-        double sum_im = 0.0;
+    for (int n = 1; n <= M; ++n) {
+        double sum_re1 = 0.0;
+        double sum_im1 = 0.0;
+        double sum_re2 = 0.0;
+        double sum_im2 = 0.0;
 
         #pragma clang loop vectorize(enable)
         for (size_t k = 0; k < N; ++k) {
@@ -130,13 +130,18 @@ EpicycleArray computeEpicycles(const Contour& contour) noexcept {
             double re = contour[k].real();
             double im = contour[k].imag();
 
-            sum_re += re * c - im * s;
-            sum_im += re * s + im * c;
+            sum_re1 += re * c - im * s;
+            sum_im1 += re * s + im * c;
+            sum_re2 += re * c + im * s;
+            sum_im2 += im * c - re * s;
         }
         
-        Complex c_n(sum_re / N, sum_im / N);
-        // std::println("c_{}: {:.5f}", n, std::abs(c_n));
-        epicycles[n + M] = {static_cast<double>(n), c_n, std::abs(c_n)};
+        Complex c_n1(sum_re1 / N, sum_im1 / N);
+        Complex c_n2(sum_re2 / N, sum_im2 / N);
+        // std::println("c_{}: {:.5f}", n, std::abs(c_n1));
+        // std::println("c_{}: {:.5f}", -n, std::abs(c_n2));
+        epicycles[M + n] = {static_cast<double>(n), c_n1, std::abs(c_n1)};
+        epicycles[M - n] = {static_cast<double>(-n), c_n2, std::abs(c_n2)};
     }
 
     std::ranges::sort(epicycles, std::ranges::greater{},[](const Epicycle& e) { return std::norm(e.coef); });
