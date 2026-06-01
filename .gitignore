@@ -21,6 +21,7 @@ number_theory/modular_arithmetic/inv_mod.cpp
 matan/dft/krug.cpp
 matan/dft/photo.png
 matan/dft/*.txt
+matan/dft/dft_test.cpp
 
 build/
 out/

@@ -109,7 +109,7 @@ EpicycleArray computeEpicycles(const Contour& contour) noexcept {
     const size_t N = contour.size();
     EpicycleArray epicycles;
     if (N == 0) return {};
-    epicycles[0] = {0, 0, 0};
+    epicycles[M] = {0, 0, 0};
 
     const double pi2_N = -2.0 * std::numbers::pi / N;
 
