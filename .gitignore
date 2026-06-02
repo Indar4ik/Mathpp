@@ -22,6 +22,7 @@ matan/dft/krug.cpp
 matan/dft/photo.png
 matan/dft/*.txt
 matan/dft/dft_test.cpp
+matan/dft/dft_examples.hpp
 
 build/
 out/
