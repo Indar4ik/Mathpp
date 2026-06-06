@@ -8,7 +8,6 @@
 #include <iostream>
 // #include <mkl.h>
 #include <numbers>
-// #include <print>
 #include <print>
 #include <string>
 #include <utility>
@@ -57,7 +56,7 @@ Contour prepareContour(const std::vector<std::pair<int, int>>& raw_points) noexc
     }
 
     // Замыкание контура
-    if(raw_points.back() != raw_points.front()) contour.emplace_back(static_cast<double>(raw_points.front().first), static_cast<double>(raw_points.front().second));
+    // if(raw_points.back() != raw_points.front()) contour.emplace_back(static_cast<double>(raw_points.front().first), static_cast<double>(raw_points.front().second));
 
     return contour;
 }
@@ -296,6 +295,7 @@ int main(){
     SetTargetFPS(240);
 
     double t = 0.0;
+    double drawn = 0.0; // накопленный параметр; 1.0 = один полный обход контура
     const double dt = 1.0 / pixels_count;
     std::vector<Vector2> trail;
 
@@ -314,11 +314,20 @@ int main(){
 
         // Физика
         calculateFrame(epicycles, t, frame_vectors, frame_joints);
-        if (showTrail && (speedMult * trail.size() < pixels_count)) {
-            trail.push_back({ static_cast<float>(frame_joints.back().pos.real()) + offset.x, static_cast<float>(frame_joints.back().pos.imag()) + offset.y });
+
+        const double step = dt * speedMult;
+        // Трасса пишется ровно один период независимо от скорости (даже если её менять по ходу). 
+        // Кнопка Clear опустошает trail -> накопитель сбрасывается и кривая
+        // перерисовывается заново.
+        if (showTrail) {
+            if (trail.empty()) drawn = 0.0;
+            if (drawn < 1.0) {
+                trail.push_back({ static_cast<float>(frame_joints.back().pos.real()) + offset.x, static_cast<float>(frame_joints.back().pos.imag()) + offset.y });
+                drawn += step;
+            }
         }
 
-        t += dt * speedMult;
+        t += step;
         t -= (int)t;
 
         // Отрисовка

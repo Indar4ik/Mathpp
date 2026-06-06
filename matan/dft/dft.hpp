@@ -55,9 +55,6 @@ inline void resample_pow2(std::vector<cd>& c) noexcept {
 }
 
 // Предвычисленный план: бит-обратные индексы и твиддлы для заданного n.
-// Единственный источник истины о размерах — поле n. Связь "compute вызывают
-// с результатом prepare" выражена структурно (один объект), а не контрактом во времени,
-// поэтому компилятору не нужны (и бесполезны для operator[]) assume на .size().
 struct Plan {
     size_t n = 0;
     std::vector<size_t> revers_idx;
@@ -134,9 +131,9 @@ inline void transform(std::vector<cd>& arr, const Plan& plan) noexcept {
             #pragma clang loop vectorize(enable) interleave(enable)
             for (size_t j = 1; j < half; ++j) {
                 cd w = tw[j * step];
-                cd uu = a[i + j], vv = a[i + j + half] * w;
-                a[i + j] = uu + vv;
-                a[i + j + half] = uu - vv;
+                cd u = a[i + j], v = a[i + j + half] * w;
+                a[i + j] = u + v;
+                a[i + j + half] = u - v;
             }
         }
     }
