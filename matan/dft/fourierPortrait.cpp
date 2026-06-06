@@ -9,15 +9,17 @@
 // #include <mkl.h>
 #include <numbers>
 // #include <print>
+#include <print>
 #include <string>
 #include <utility>
 #include <vector>
 #include <raylib.h>
+#include "dft.hpp"
 
 // Максимальная частота эпицикла
-constexpr int M = 400;
-constexpr size_t NUM_EPICYCLES = 2 * M + 1;
-constexpr size_t AMORTIZATION_COUNT = 10;
+constexpr int M = 200;
+constexpr size_t NUM_EPICYCLES = 2 * M;
+constexpr size_t AMORTIZATION_COUNT = 8;
 constexpr double AMORTIZATION_DEEP_INV = 1.0 / static_cast<double>(1ULL << AMORTIZATION_COUNT);
 
 // Тип комплексного числа
@@ -103,8 +105,8 @@ void centerContour(Contour& contour) noexcept {
     }
 }
 
-// Частоты ∊ [-M; M]
-// Всего будет вычислено 2M+1 эпициклов
+// Частоты ∊ [-M; M] \ 0
+// Всего будет вычислено 2M эпициклов
 EpicycleArray computeEpicycles(const Contour& contour) noexcept {
     const size_t N = contour.size();
     EpicycleArray epicycles;
@@ -140,11 +142,37 @@ EpicycleArray computeEpicycles(const Contour& contour) noexcept {
         Complex c_n2(sum_re2 / N, sum_im2 / N);
         // std::println("c_{}: {:.5f}", n, std::abs(c_n1));
         // std::println("c_{}: {:.5f}", -n, std::abs(c_n2));
-        epicycles[M + n] = {static_cast<double>(n), c_n1, std::abs(c_n1)};
+        epicycles[M + n - 1] = {static_cast<double>(n), c_n1, std::abs(c_n1)};
         epicycles[M - n] = {static_cast<double>(-n), c_n2, std::abs(c_n2)};
     }
 
     std::ranges::sort(epicycles, std::ranges::greater{},[](const Epicycle& e) { return std::norm(e.coef); });
+
+    return epicycles;
+}
+
+EpicycleArray computeEpicycles_fft(Contour& contour) noexcept {
+    const size_t N = contour.size();
+    [[assume(2 * M <= N)]];
+    if (N == 0) return {};
+    EpicycleArray epicycles;
+
+    fft::resample_pow2(contour);
+    const size_t N_new = contour.size();
+    // std::println("{}", N_new);
+    const double N_inv = 1.0 / static_cast<double>(N_new);
+    fft::transform(contour, fft::make_plan(N_new));
+
+    for (size_t i = 1; i <= M; ++i) {
+        epicycles[i - 1] = {static_cast<double>(i), contour[i] * N_inv, std::abs(contour[i]) * N_inv};
+        // std::println("c_{}: {:.5f}", i, epicycles[i - 1].radius);
+    }
+    for (size_t i = N_new - M; i < N_new; ++i){
+        epicycles[2 * M + i - N_new] = {static_cast<double>(i) - static_cast<double>(N_new), contour[i] * N_inv, std::abs(contour[i]) * N_inv};
+        // std::println("c_{}: {:.5f}", static_cast<long>(i) - static_cast<long>(N_new), epicycles[2 * M + i - N_new].radius);
+    }
+
+    std::ranges::sort(epicycles, std::ranges::greater{},[](const Epicycle& c) { return c.radius; });
 
     return epicycles;
 }
@@ -256,7 +284,7 @@ int main(){
         vec_pixels.push_back(Vector2(static_cast<float>(pix.real()) + offset.x, static_cast<float>(pix.imag()) + offset.y));
     }
 
-    auto epicycles = computeEpicycles(contour);
+    auto epicycles = computeEpicycles_fft(contour);
     
     // --- ПРЕАЛЛОКАЦИЯ БУФЕРОВ ДЛЯ ГОРЯЧЕГО ЦИКЛА ---
     VectorArray frame_vectors;
