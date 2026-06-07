@@ -16,7 +16,7 @@
 #include "dft.hpp"
 
 // Максимальная частота эпицикла
-constexpr int M = 200;
+constexpr int M = 400;
 constexpr size_t NUM_EPICYCLES = 2 * M;
 constexpr size_t AMORTIZATION_COUNT = 8;
 constexpr double AMORTIZATION_DEEP_INV = 1.0 / static_cast<double>(1ULL << AMORTIZATION_COUNT);
@@ -261,6 +261,24 @@ bool DrawClearButton(Rectangle bounds, const char* text, std::vector<Vector2>& v
     return hovered;
 }
 
+// Реальная длина контура в пикселях: сумма длин всех отрезков исходного points.txt,
+// включая замыкающий (последняя точка -> первая). Делает dt независимым от числа точек —
+// скорость становится "пикселей контура за кадр", одинаковой для разреженных и плотных
+// контуров (9 точек и 9000 точек идут с одинаковой видимой скоростью).
+double contourPerimeter(const std::vector<std::pair<int, int>>& pts) noexcept {
+    const size_t n = pts.size();
+    if (n < 2) return 1.0;
+    double len = 0.0;
+    for (size_t i = 0; i < n; ++i) {
+        const auto& a = pts[i];
+        const auto& b = pts[(i + 1) % n]; // замыкание контура
+        const double dx = static_cast<double>(b.first - a.first);
+        const double dy = static_cast<double>(b.second - a.second);
+        len += std::sqrt(dx * dx + dy * dy);
+    }
+    return len > 0.0 ? len : 1.0;
+}
+
 int main(){
     constexpr int width = 1280;
     constexpr int height = 720;
@@ -269,7 +287,7 @@ int main(){
     const std::vector<std::pair<int, int>> raw_pixels = loadPoints("points.txt");
     // const std::vector<std::pair<int, int>> raw_pixels = generateHeart();
     if (raw_pixels.empty()) return 1;
-    const double pixels_count = static_cast<double>(raw_pixels.size());
+    const double perimeter = contourPerimeter(raw_pixels);
 
     auto contour = prepareContour(raw_pixels);
 
@@ -296,7 +314,7 @@ int main(){
 
     double t = 0.0;
     double drawn = 0.0; // накопленный параметр; 1.0 = один полный обход контура
-    const double dt = 1.0 / pixels_count;
+    const double dt = 1.0 / perimeter; // шаг = 1 пиксель длины контура (speedMult -> px/кадр)
     std::vector<Vector2> trail;
 
     // --- ПЕРЕМЕННЫЕ ИНТЕРФЕЙСА ---
@@ -304,12 +322,12 @@ int main(){
     bool showLines = true;
     bool showTrail = true;
     bool showOutline = true;
-    double speedMult = 0.2; // Начальная скорость
+    double speedMult = 0.5; // Начальная скорость
 
     while (!WindowShouldClose()) {
         // Управление скоростью стрелочками ВВЕРХ / ВНИЗ
-        if (IsKeyPressed(KEY_UP)) speedMult += 0.02;
-        if (IsKeyPressed(KEY_DOWN) && speedMult > 0.03) speedMult -= 0.02;
+        if (IsKeyPressed(KEY_UP)) speedMult += 0.05;
+        if (IsKeyPressed(KEY_DOWN) && speedMult > 0.06) speedMult -= 0.05;
         if (IsKeyPressed(KEY_S)) speedMult = 0.004;
 
         // Физика
@@ -342,7 +360,7 @@ int main(){
 
             // Рисуем круги только если радиус > 0.5 пикселя, иначе их всё равно не видно
             if (showCircles && radius > 0.5f) {
-                DrawCircleLines(p1.x, p1.y, radius, Fade(WHITE, 0.15f));
+                DrawCircleLines(p1.x, p1.y, radius, Fade(WHITE, 0.12f));
             }
             if (showLines) {
                 DrawLineV(p1, p2, WHITE);

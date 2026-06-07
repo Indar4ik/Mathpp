@@ -19,7 +19,7 @@ number_theory/factorization/primes_gen.cpp
 number_theory/factorization/fctr.cpp
 number_theory/modular_arithmetic/inv_mod.cpp
 matan/dft/circle_gen.cpp
-matan/dft/photo.png
+matan/dft/*.png
 matan/dft/*.txt
 matan/dft/dft_test.cpp
 matan/dft/dft_examples.hpp
@@ -29,3 +29,4 @@ out/
 .vscode/
 .vs/
 .claude/
+__pycache__/
