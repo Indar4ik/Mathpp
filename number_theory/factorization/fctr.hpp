@@ -4,8 +4,9 @@
 #include <vector>
 
 inline void sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept {
-    factors.clear();
     if (n <= 1) return;
+    factors.clear();
+    factors.reserve(64);
 
     int twos = std::countr_zero(n);
     n >>= twos;
@@ -15,7 +16,6 @@ inline void sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept {
     while (n % 7 == 0) { factors.push_back(7); n /= 7; }
     while (n % 11 == 0) { factors.push_back(11); n /= 11; }
     while (n % 13 == 0) { factors.push_back(13); n /= 13; }
-    // factors.reserve(64);
 
     static constexpr uint64_t increments[] = 
     {2, 4, 6, 2, 6, 4, 2, 4, 6, 6, 2, 6, 4, 2, 6, 4, 6, 8, 4, 2, 4, 2, 4, 14, 4, 6, 2, 10, 2, 6, 
@@ -139,7 +139,7 @@ inline void sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept {
             n = q;
         }
         i += increments[idx];
-        idx = (idx + 1) % 3242;
+        if (++idx == 3242) idx = 0;
     }
     if (n > 1) factors.push_back(n);
 }

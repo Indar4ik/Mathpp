@@ -94,8 +94,6 @@ inline void transform(std::vector<cd>& arr, const Plan& plan) noexcept {
     [[assume((n & (n - 1)) == 0)]];
     [[assume(n >= 2)]];
 
-    // Сырые неалиасящие указатели — то, что (безуспешно) пытались сказать assume на size:
-    // arr, twiddles, revers_idx не пересекаются, что разблокирует векторизацию бабочек.
     cd* __restrict a = arr.data();
     const size_t* __restrict rev = plan.revers_idx.data();
     const cd* __restrict tw = plan.twiddles.data();

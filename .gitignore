@@ -29,4 +29,5 @@ out/
 .vscode/
 .vs/
 .claude/
+CLAUDE.md
 __pycache__/

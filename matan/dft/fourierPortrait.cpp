@@ -269,13 +269,18 @@ double contourPerimeter(const std::vector<std::pair<int, int>>& pts) noexcept {
     const size_t n = pts.size();
     if (n < 2) return 1.0;
     double len = 0.0;
-    for (size_t i = 0; i < n; ++i) {
+    for (size_t i = 0; i < n - 1; ++i) {
         const auto& a = pts[i];
-        const auto& b = pts[(i + 1) % n]; // замыкание контура
+        const auto& b = pts[i + 1];
         const double dx = static_cast<double>(b.first - a.first);
         const double dy = static_cast<double>(b.second - a.second);
         len += std::sqrt(dx * dx + dy * dy);
     }
+    const auto& a = pts.back();
+    const auto& b = pts.front(); // замыкание контура
+    const double dx = static_cast<double>(b.first - a.first);
+    const double dy = static_cast<double>(b.second - a.second);
+    len += std::sqrt(dx * dx + dy * dy);
     return len > 0.0 ? len : 1.0;
 }
 
