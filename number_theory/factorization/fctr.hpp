@@ -3,6 +3,54 @@
 #include <cstdint>
 #include <vector>
 
+inline uint64_t mulmod(uint64_t a, uint64_t b, uint64_t m) noexcept {
+    [[assume(m > 0)]];
+    return static_cast<__uint128_t>(a) * b % m;
+}
+
+inline uint64_t powmod(uint64_t a, uint64_t e, uint64_t m) noexcept {
+    [[assume(m > 0)]];
+    uint64_t r = 1ull;
+    while (e){
+        if (e & 1ull) r = mulmod(r, a, m);
+        a = mulmod(a, a, m);
+        e >>= 1;
+    }
+    return r;
+}
+
+// Один раунд Миллера-Рабина: false -> a свидетель составности n
+// Предполагается, что n нечётное, n - 1 = d * 2^s (d нечётное), 1 < a < n
+inline bool mr_witness(uint64_t a, uint64_t n) noexcept {
+    [[assume((n & 1ull) == 1ull)]];
+    static uint64_t d = n - 1ull;
+    static int s = std::countr_zero(d);
+    d >>= s;
+    uint64_t x = powmod(a, d, n);
+    if (x == 1 || x == n - 1) return true;
+    for (int r = 1; r < s; ++r) {
+        x = mulmod(x, x, n);
+        if (x == n - 1) return true;
+    }
+    return false;
+}
+
+// Детерминированный тест простоты для всего диапазона uint64_t
+// Набор из 12 оснований {2,3,...,37} доказанно покрывает все n < 2^64
+inline bool is_prime(uint64_t n) noexcept {
+    if (n < 2) return false;
+    for (uint64_t p : {2ull, 3ull, 5ull, 7ull, 11ull, 13ull, 17ull, 19ull, 23ull, 29ull, 31ull, 37ull}) {
+        if (n == p) return true;
+        if (n % p == 0) return false;
+    }
+
+    // n нечётное и не делится на малые простые: раскладываем n - 1 = d * 2^s и прогоняем тест
+    for (uint64_t a : {2ull, 3ull, 5ull, 7ull, 11ull, 13ull, 17ull, 19ull, 23ull, 29ull, 31ull, 37ull}) {
+        if (!mr_witness(a, n)) return false;
+    }
+    return true;
+}
+
 inline void sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept {
     if (n <= 1) return;
     factors.clear();
