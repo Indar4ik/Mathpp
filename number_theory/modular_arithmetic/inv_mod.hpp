@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <immintrin.h>
 
-// Вспомогательная функция: a^{-1} mod 2^64 (Метод Ньютона-Рафсона)
+// Вспомогательная функция: x^{-1} mod 2^64 (Метод Ньютона от f(a) = 1/a - x)
 inline uint64_t inv_mod_2_64(uint64_t x) noexcept {
     uint64_t y = x;
     y *= 2 - x * y;
@@ -17,6 +17,7 @@ inline uint64_t inv_mod_2_64(uint64_t x) noexcept {
 // ax≡1 (mod m)
 // m - нечётное!
 inline uint64_t inv_mod_odd(uint64_t a, uint64_t m) noexcept {
+    [[assume((m & 1ull) == 1ull)]];
     if (m <= 1) return 0;
     
     uint64_t u = a % m;

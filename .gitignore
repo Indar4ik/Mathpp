@@ -25,6 +25,7 @@ matan/dft/dft_test.cpp
 matan/dft/dft_examples.hpp
 
 build/
+bench/
 out/
 .vscode/
 .vs/

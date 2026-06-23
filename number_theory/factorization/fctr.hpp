@@ -3,34 +3,89 @@
 #include <cstdint>
 #include <vector>
 
+// Вспомогательная функция: x^{-1} mod 2^64 (нечётное x).
+inline uint64_t inv_mod2_64(uint64_t x) noexcept {
+    uint64_t y = x;
+    y *= 2 - x * y;
+    y *= 2 - x * y;
+    y *= 2 - x * y;
+    y *= 2 - x * y;
+    y *= 2 - x * y;
+    return y;
+}
+
 inline uint64_t mulmod(uint64_t a, uint64_t b, uint64_t m) noexcept {
-    [[assume(m > 0)]];
+    [[assume((m & 1ull) == 1ull)]];
     return static_cast<__uint128_t>(a) * b % m;
 }
 
 inline uint64_t powmod(uint64_t a, uint64_t e, uint64_t m) noexcept {
-    [[assume(m > 0)]];
+    [[assume((m & 1ull) == 1ull)]];
     uint64_t r = 1ull;
     while (e){
-        if (e & 1ull) r = mulmod(r, a, m);
+        if (e & 1ull) r = mulmod(a, r, m);
         a = mulmod(a, a, m);
         e >>= 1;
     }
     return r;
 }
 
-// Один раунд Миллера-Рабина: false -> a свидетель составности n
-// Предполагается, что n нечётное, n - 1 = d * 2^s (d нечётное), 1 < a < n
-inline bool mr_witness(uint64_t a, uint64_t n) noexcept {
-    [[assume((n & 1ull) == 1ull)]];
-    static uint64_t d = n - 1ull;
-    static int s = std::countr_zero(d);
-    d >>= s;
-    uint64_t x = powmod(a, d, n);
-    if (x == 1 || x == n - 1) return true;
+// Montgomery-арифметика по нечётному модулю n (R = 2^64).
+// Все значения внутри хранятся в форме a_bar = a * R mod n; константы считаются раз на n.
+struct mont {
+    uint64_t m;      // модуль (нечётный)
+    uint64_t m_inv;  // -m^{-1} mod 2^64
+    uint64_t r2;     // R^2 mod m   (для перевода в форму)
+    uint64_t one;    // R   mod m   (Montgomery-форма единицы)
+
+    explicit mont(uint64_t mod) noexcept : m(mod) {
+        [[assume((m & 1ull) == 1ull)]];
+        m_inv = -inv_mod2_64(m);                     // m_inv * m == -1 (mod 2^64)
+        one = (-m) % m;                                // R mod m = (2^64 mod m) = (-m) mod m
+        r2 = static_cast<__uint128_t>(one) * one % m;  // (R mod m)^2 mod m = R^2 mod m
+    }
+
+    // REDC: по x < m*R возвращает x * R^{-1} mod m в [0, m).
+    uint64_t redc(__uint128_t x) const noexcept {
+        uint64_t t = static_cast<uint64_t>(x) * m_inv; // t = (x mod R) * (-m^{-1}) mod R
+        // По построению t: R | (x + t*m), берём старшее слово частного.
+        // Граница: x < m*R, t*m < m*R, значит sum < 2*m*R, что при m ~ 2^64
+        // выходит за 2^128 -> ловим перенос явно (adc в asm).
+        __uint128_t tm = static_cast<__uint128_t>(t) * m;
+        __uint128_t sum = x + tm;                      // младшие 64 бита == 0 по построению
+        uint64_t r = static_cast<uint64_t>(sum >> 64);
+        // Частное в [0, 2m): вычесть m нужно, если r >= m ЛИБО был перенос за 128 бит (тогда истинное верхнее слово r+2^64 заведомо >= m).
+        // sub_overflow даёт d=r-m и borrow=(r<m) одним sub+флагом -> clang делает выбор через cmov,
+        // что критично в горячем цикле pow/Pollard (clang быстрее на REDC).
+        uint64_t d;
+        bool borrow = __builtin_sub_overflow(r, m, &d);  // borrow == (r < m)
+        return (borrow & (sum >= x)) ? r : d;            // нет переноса и r<m -> оставляем r
+    }
+
+    uint64_t mul(uint64_t a, uint64_t b) const noexcept { return redc((__uint128_t)a * b); }
+    uint64_t to(uint64_t a)  const noexcept { return mul(a, r2); }   // a -> a*R mod m
+    uint64_t from(uint64_t a) const noexcept { return redc(a); }     // a*R -> a mod m
+
+    // a^e mod n, вход/выход в Montgomery-форме.
+    uint64_t pow(uint64_t a, uint64_t e) const noexcept {
+        uint64_t r = one;
+        while (e) {
+            if (e & 1ull) r = mul(r, a);
+            a = mul(a, a);
+            e >>= 1;
+        }
+        return r;
+    }
+};
+
+// Один раунд Миллера-Рабина в Montgomery-форме: false -> a свидетель составности.
+// M построен на нечётном n; mone == (n-1) в форме; вход a в обычном виде.
+inline bool mr_witness(uint64_t a, const mont& M, uint64_t mone, uint64_t d, int s) noexcept {
+    uint64_t x = M.pow(M.to(a), d);                // a^d в форме
+    if (x == M.one || x == mone) return true;      // a^d == 1 или -1
     for (int r = 1; r < s; ++r) {
-        x = mulmod(x, x, n);
-        if (x == n - 1) return true;
+        x = M.mul(x, x);
+        if (x == mone) return true;                // встретили -1 -> раунд пройден
     }
     return false;
 }
@@ -44,9 +99,15 @@ inline bool is_prime(uint64_t n) noexcept {
         if (n % p == 0) return false;
     }
 
-    // n нечётное и не делится на малые простые: раскладываем n - 1 = d * 2^s и прогоняем тест
+    // n нечётное и не делится на малые простые: раскладываем n - 1 = d * 2^s один раз
+    uint64_t d = n - 1ull;
+    int s = std::countr_zero(d);
+    d >>= s;
+    // Montgomery-контекст и -1 в форме считаем один раз на n.
+    mont M(n);
+    uint64_t mone = n - M.one;                     // (n-1) в Montgomery-форме = -1
     for (uint64_t a : {2ull, 3ull, 5ull, 7ull, 11ull, 13ull, 17ull, 19ull, 23ull, 29ull, 31ull, 37ull}) {
-        if (!mr_witness(a, n)) return false;
+        if (!mr_witness(a, M, mone, d, s)) return false;
     }
     return true;
 }
