@@ -6,7 +6,6 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
-// #include <mkl.h>
 #include <numbers>
 #include <print>
 #include <string>
