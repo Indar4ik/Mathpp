@@ -31,7 +31,7 @@ inline void zero_pad(std::vector<cd>& arr) noexcept {
 // вокруг нуля, а заодно расстраивает соответствие бин<->гармоника), здесь мы линейно
 // интерполируем ту же кривую в N = bit_ceil точек, равномерно по параметру. Кривая та же,
 // меняется только число отсчётов, поэтому бин i по-прежнему отвечает гармонике i.
-inline void resample_pow2(std::vector<cd>& c) noexcept {
+inline void resample_pow2(std::vector<cd>& c, size_t &n) noexcept {
     const size_t P = c.size();
     if (P < 2) return;
 
@@ -39,6 +39,7 @@ inline void resample_pow2(std::vector<cd>& c) noexcept {
     // период образуют Q различных вершин c[0..Q-1] с переходом c[Q-1] -> c[0].
     const size_t Q = (c.front() == c.back()) ? P - 1 : P;
     const size_t N = std::bit_ceil(Q);
+    n = N; // выставляем ВСЕГДА — иначе при раннем выходе caller получит старый размер
     if (N == Q) { c.resize(Q); return; }
 
     std::vector<cd> out(N);
@@ -56,36 +57,32 @@ inline void resample_pow2(std::vector<cd>& c) noexcept {
 
 // Предвычисленный план: бит-обратные индексы и твиддлы для заданного n.
 struct Plan {
-    size_t n = 0;
+    size_t n;
     std::vector<size_t> revers_idx;
     std::vector<cd> twiddles;
+
+    explicit Plan(size_t N) noexcept : n(N){
+        [[assume((n & (n - 1)) == 0)]];
+        [[assume(n >= 2)]];
+        revers_idx.resize(n, 0);
+        twiddles.resize(n / 2);
+
+        size_t* __restrict rev = revers_idx.data();
+        for (size_t i = 1, j = 0; i < n; ++i) {
+            size_t bit = n >> 1;
+            for (; j & bit; bit >>= 1) j ^= bit;
+            j ^= bit;
+            rev[i] = j;
+        }
+
+        cd* __restrict tw = twiddles.data();
+        const double ang_step = 2.0 * std::numbers::pi / static_cast<double>(n);
+        for (size_t i = 0; i < n / 2; ++i) {
+            double ang = ang_step * static_cast<double>(i);
+            tw[i] = {std::cos(ang), -std::sin(ang)};
+        }
+    }
 };
-
-inline Plan make_plan(size_t n) noexcept {
-    [[assume((n & (n - 1)) == 0)]];
-    [[assume(n >= 2)]];
-
-    Plan plan;
-    plan.n = n;
-    plan.revers_idx.resize(n, 0);
-    plan.twiddles.resize(n / 2);
-
-    size_t* __restrict rev = plan.revers_idx.data();
-    for (size_t i = 1, j = 0; i < n; ++i) {
-        size_t bit = n >> 1;
-        for (; j & bit; bit >>= 1) j ^= bit;
-        j ^= bit;
-        rev[i] = j;
-    }
-
-    cd* __restrict tw = plan.twiddles.data();
-    const double ang_step = 2.0 * std::numbers::pi / static_cast<double>(n);
-    for (size_t i = 0; i < n / 2; ++i) {
-        double ang = ang_step * static_cast<double>(i);
-        tw[i] = {std::cos(ang), -std::sin(ang)};
-    }
-    return plan;
-}
 
 // Итеративный Кули-Тьюки O(n log n). arr.size() должен совпадать с plan.n.
 inline void transform(std::vector<cd>& arr, const Plan& plan) noexcept {
@@ -141,7 +138,7 @@ inline void transform(std::vector<cd>& arr, const Plan& plan) noexcept {
 inline void transform(std::vector<cd>& arr) noexcept {
     const size_t n = arr.size();
     if (n <= 1) return;
-    transform(arr, make_plan(n));
+    transform(arr, Plan(n));
 }
 
 } // namespace fft

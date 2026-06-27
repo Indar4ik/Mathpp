@@ -56,7 +56,7 @@ Contour prepareContour(const std::vector<std::pair<int, int>>& raw_points) noexc
     }
 
     // Замыкание контура
-    // if(raw_points.back() != raw_points.front()) contour.emplace_back(static_cast<double>(raw_points.front().first), static_cast<double>(raw_points.front().second));
+    if(raw_points.back() != raw_points.front()) contour.emplace_back(static_cast<double>(raw_points.front().first), static_cast<double>(raw_points.front().second));
 
     return contour;
 }
@@ -151,23 +151,23 @@ EpicycleArray computeEpicycles(const Contour& contour) noexcept {
 }
 
 EpicycleArray computeEpicycles_fft(Contour& contour) noexcept {
-    const size_t N = contour.size();
+    size_t N = contour.size();
     [[assume(2 * M <= N)]];
     if (N == 0) return {};
     EpicycleArray epicycles;
 
-    fft::resample_pow2(contour);
-    const size_t N_new = contour.size();
-    // std::println("{}", N_new);
-    const double N_inv = 1.0 / static_cast<double>(N_new);
-    fft::transform(contour, fft::make_plan(N_new));
+    fft::resample_pow2(contour, N);
+    // std::println("{}", N);
+    [[assume((N & (N - 1ull)) == 0ull)]];
+    const double N_inv = 1.0 / static_cast<double>(N);
+    fft::transform(contour, fft::Plan(N));
 
     for (size_t i = 1; i <= M; ++i) {
         epicycles[i - 1] = {static_cast<double>(i), contour[i] * N_inv, std::abs(contour[i]) * N_inv};
         // std::println("c_{}: {:.5f}", i, epicycles[i - 1].radius);
     }
-    for (size_t i = N_new - M; i < N_new; ++i){
-        epicycles[2 * M + i - N_new] = {static_cast<double>(i) - static_cast<double>(N_new), contour[i] * N_inv, std::abs(contour[i]) * N_inv};
+    for (size_t i = N - M; i < N; ++i){
+        epicycles[2 * M + i - N] = {static_cast<double>(i) - static_cast<double>(N), contour[i] * N_inv, std::abs(contour[i]) * N_inv};
         // std::println("c_{}: {:.5f}", static_cast<long>(i) - static_cast<long>(N_new), epicycles[2 * M + i - N_new].radius);
     }
 
