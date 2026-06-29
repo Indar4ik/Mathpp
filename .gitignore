@@ -5,9 +5,6 @@
 *.so
 *.pdb
 *.optrpt
-*_clang
-*_gcc
-*_icpx
 *.g++*
 *.clang*
 *.icpx*
@@ -15,12 +12,9 @@
 compile_flags.txt
 number_theory/factorization/primes2^30.txt
 number_theory/factorization/primes_gen.cpp
-number_theory/factorization/fctr.cpp
-number_theory/modular_arithmetic/inv_mod.cpp
 matan/dft/fourierPortrait/*.png
 matan/dft/fourierPortrait/points
 matan/dft/fourierPortrait/points.txt
-matan/dft/dft_test.cpp
 matan/dft/dft_examples.hpp
 
 build/
