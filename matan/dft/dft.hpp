@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <complex>
@@ -84,7 +85,7 @@ struct Plan {
 };
 
 // Итеративный Кули-Тьюки O(n log n). arr.size() должен совпадать с plan.n.
-inline void transform(std::vector<cd>& arr, const Plan& plan) noexcept {
+inline void fft(std::vector<cd>& arr, const Plan& plan) noexcept {
     const size_t n = plan.n;
     if (n <= 1) return;
     [[assume((n & (n - 1)) == 0)]];
@@ -133,11 +134,92 @@ inline void transform(std::vector<cd>& arr, const Plan& plan) noexcept {
     }
 }
 
-// Удобная обёртка для разового преобразования (строит план на месте).
-inline void transform(std::vector<cd>& arr) noexcept {
+// Обратный итеративный Кули-Тьюки O(n log n). arr.size() должен совпадать с plan.n.
+inline void ifft(std::vector<cd>& arr, const Plan& plan) noexcept {
+    const size_t n = plan.n;
+    if (n <= 1) return;
+    [[assume((n & (n - 1)) == 0)]];
+    [[assume(n >= 2)]];
+
+    cd* __restrict a = arr.data();
+    const size_t* __restrict rev = plan.revers_idx.data();
+    const cd* __restrict tw = plan.twiddles.data();
+
+    // Бит-реверсная перестановка
+    for (size_t i = 0; i < n; ++i) if (i < rev[i]) std::swap(a[i], a[rev[i]]);
+
+    // Вырожденный случай - бабочки длины 2
+    for (size_t i = 0; i < n; i += 2) {
+        cd u = a[i];
+        cd v = a[i + 1];
+        a[i] = (u + v) * 0.5; a[i + 1] = (u - v) * 0.5;
+    }
+
+    // Вырожденный случай - бабочки длины 4
+    for (size_t i = 0; i < n; i += 4) {
+        cd u1 = a[i];
+        cd u2 = a[i + 1];
+        cd v1 = a[i + 2];
+        cd v2 = {-a[i + 3].imag(), a[i + 3].real()};
+        a[i] = (u1 + v1) * 0.5; a[i + 1] = (u2 + v2) * 0.5;
+        a[i + 2] = (u1 - v1) * 0.5; a[i + 3] = (u2 - v2) * 0.5;
+    }
+
+    // Бабочки по каждой паре с увеличивающейся длиной 8 -> 16 -> 32...
+    for (size_t len = 8; len <= n; len <<= 1) {
+        const size_t half = len >> 1;
+        const size_t step = n / len;
+        for (size_t i = 0; i < n; i += len) {
+            cd u = a[i], v = a[i + half];
+            a[i] = (u + v) * 0.5;
+            a[i + half] = (u - v) * 0.5;
+            #pragma clang loop vectorize(enable) interleave(enable)
+            for (size_t j = 1; j < half; ++j) {
+                cd w = std::conj(tw[j * step]);
+                cd u = a[i + j], v = a[i + j + half] * w;
+                a[i + j] = (u + v) * 0.5;
+                a[i + j + half] = (u - v) * 0.5;
+            }
+        }
+    }
+}
+
+// Удобные обёртки для разового преобразования (строят план на месте).
+inline void fft(std::vector<cd>& arr) noexcept {
     const size_t n = arr.size();
     if (n <= 1) return;
-    transform(arr, Plan(n));
+    fft(arr, Plan(n));
+}
+
+inline void ifft(std::vector<cd>& arr) noexcept {
+    const size_t n = arr.size();
+    if (n <= 1) return;
+    ifft(arr, Plan(n));
+}
+
+inline std::vector<cd> polynom_mul(std::vector<cd> a, std::vector<cd> b){
+    if (a.empty() || b.empty()) return {};
+
+    size_t n = a.size(), m = b.size();
+    size_t k = n + m - 1ull;
+
+    if (n >= m){
+        n = 2ull * std::bit_ceil(n); m = n;
+        a.resize(n, cd(0.0, 0.0)); b.resize(n, cd(0.0, 0.0));
+    }
+    else {
+        m = 2ull * std::bit_ceil(m); n = m;
+        a.resize(m, cd(0.0, 0.0)); b.resize(m, cd(0.0, 0.0));
+    }
+
+    std::vector<cd> c(n);
+    Plan plan(n);
+    fft(a, plan); fft(b, plan);
+    for (size_t i = 0; i < n; ++i) c[i] = a[i] * b[i];
+    ifft(c, plan);
+
+    c.resize(k);
+    return c;
 }
 
 } // namespace fft

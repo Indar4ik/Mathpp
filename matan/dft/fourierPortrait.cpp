@@ -159,7 +159,7 @@ EpicycleArray computeEpicycles_fft(Contour& contour) noexcept {
     // std::println("{}", N);
     [[assume((N & (N - 1ull)) == 0ull)]];
     const double N_inv = 1.0 / static_cast<double>(N);
-    fft::transform(contour, fft::Plan(N));
+    fft::fft(contour, fft::Plan(N));
 
     for (size_t i = 1; i <= M; ++i) {
         epicycles[i - 1] = {static_cast<double>(i), contour[i] * N_inv, std::abs(contour[i]) * N_inv};
