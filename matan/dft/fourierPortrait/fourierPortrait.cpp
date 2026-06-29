@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 #include <raylib.h>
-#include "dft.hpp"
+#include "../dft.hpp"
 
 // Максимальная частота эпицикла
 constexpr int M = 400;
