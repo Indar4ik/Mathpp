@@ -152,7 +152,7 @@ inline void ifft(std::vector<cd>& arr, const Plan& plan) noexcept {
     for (size_t i = 0; i < n; i += 2) {
         cd u = a[i];
         cd v = a[i + 1];
-        a[i] = (u + v) * 0.5; a[i + 1] = (u - v) * 0.5;
+        a[i] = u + v; a[i + 1] = u - v;
     }
 
     // Вырожденный случай - бабочки длины 4
@@ -161,8 +161,8 @@ inline void ifft(std::vector<cd>& arr, const Plan& plan) noexcept {
         cd u2 = a[i + 1];
         cd v1 = a[i + 2];
         cd v2 = {-a[i + 3].imag(), a[i + 3].real()};
-        a[i] = (u1 + v1) * 0.5; a[i + 1] = (u2 + v2) * 0.5;
-        a[i + 2] = (u1 - v1) * 0.5; a[i + 3] = (u2 - v2) * 0.5;
+        a[i] = u1 + v1; a[i + 1] = u2 + v2;
+        a[i + 2] = u1 - v1; a[i + 3] = u2 - v2;
     }
 
     // Бабочки по каждой паре с увеличивающейся длиной 8 -> 16 -> 32...
@@ -171,17 +171,21 @@ inline void ifft(std::vector<cd>& arr, const Plan& plan) noexcept {
         const size_t step = n / len;
         for (size_t i = 0; i < n; i += len) {
             cd u = a[i], v = a[i + half];
-            a[i] = (u + v) * 0.5;
-            a[i + half] = (u - v) * 0.5;
+            a[i] = u + v;
+            a[i + half] = u - v;
             #pragma clang loop vectorize(enable) interleave(enable)
             for (size_t j = 1; j < half; ++j) {
                 cd w = std::conj(tw[j * step]);
                 cd u = a[i + j], v = a[i + j + half] * w;
-                a[i + j] = (u + v) * 0.5;
-                a[i + j + half] = (u - v) * 0.5;
+                a[i + j] = u + v;
+                a[i + j + half] = u - v;
             }
         }
     }
+
+    // Единственная нормировка на 1/n вместо умножения на 0.5 на каждом этапе.
+    const double inv_n = 1.0 / static_cast<double>(n);
+    for (cd &z : arr) z *= inv_n;
 }
 
 // Удобные обёртки для разового преобразования (строят план на месте).
@@ -200,17 +204,10 @@ inline void ifft(std::vector<cd>& arr) noexcept {
 inline std::vector<cd> polynom_mul(std::vector<cd> a, std::vector<cd> b){
     if (a.empty() || b.empty()) return {};
 
-    size_t n = a.size(), m = b.size();
-    size_t k = n + m - 1ull;
+    const size_t k = a.size() + b.size() - 1ull;
+    const size_t n = std::bit_ceil(k);
 
-    if (n >= m){
-        n = 2ull * std::bit_ceil(n); m = n;
-        a.resize(n, cd(0.0, 0.0)); b.resize(n, cd(0.0, 0.0));
-    }
-    else {
-        m = 2ull * std::bit_ceil(m); n = m;
-        a.resize(m, cd(0.0, 0.0)); b.resize(m, cd(0.0, 0.0));
-    }
+    a.resize(n, cd(0.0, 0.0)); b.resize(n, cd(0.0, 0.0));
 
     std::vector<cd> c(n);
     Plan plan(n);
@@ -222,4 +219,28 @@ inline std::vector<cd> polynom_mul(std::vector<cd> a, std::vector<cd> b){
     return c;
 }
 
+inline std::vector<double> polynom_mul(std::vector<double> a, std::vector<double> b){
+    if (a.empty() || b.empty()) return {};
+
+    const size_t n = a.size(), m = b.size();
+    const size_t k = n + m - 1ull;
+    const size_t new_size = std::bit_ceil(k);
+
+    std::vector<cd> ab(new_size, cd(0.0, 0.0));
+    std::vector<double> c(k);
+    Plan plan(new_size);
+
+    // Упаковка двух вещественных многочленов в один комплексный: P = a + i*b.
+    for (size_t i = 0; i < n; ++i) ab[i].real(a[i]);
+    for (size_t i = 0; i < m; ++i) ab[i].imag(b[i]);
+
+    fft(ab, plan);
+    // P = a + i*b  =>  P^2 = a^2 - b^2 + 2i*(a*b) -> a*b=Im(P^2)*0.5
+    // IFFT(FFT(a)*FFT(b))= a * b свёртка
+    for (std::complex<double> &z : ab) z = z * z;
+    ifft(ab, plan);
+
+    for (size_t i = 0; i < k; ++i) c[i] = ab[i].imag() * 0.5;
+    return c;
+}
 } // namespace fft
