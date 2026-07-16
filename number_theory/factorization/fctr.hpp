@@ -96,7 +96,8 @@ inline bool mr_witness(uint64_t a, const mont& M, uint64_t minus_one, uint64_t d
 // Набор из 12 оснований {2,3,...,37} доказанно покрывает все n < 2^64
 inline bool is_prime(uint64_t n) noexcept {
     if (n < 2) return false;
-    for (uint64_t p : {2ull, 3ull, 5ull, 7ull, 11ull, 13ull, 17ull, 19ull, 23ull, 29ull, 31ull, 37ull}) {
+    #pragma clang loop unroll(full)
+    for (uint64_t p : {2ull, 3ull, 5ull, 13ull, 19ull, 73ull, 193ull, 407521ull, 299210837ull}) {
         if (n == p) return true;
         if (n % p == 0) return false;
     }
@@ -108,7 +109,8 @@ inline bool is_prime(uint64_t n) noexcept {
     // Montgomery-контекст и -1 в форме считаем один раз на n.
     mont M(n);
     uint64_t minus_one = n - M.one;                     // (n-1) в Montgomery-форме = -1
-    for (uint64_t a : {2ull, 3ull, 5ull, 7ull, 11ull, 13ull, 17ull, 19ull, 23ull, 29ull, 31ull, 37ull}) {
+    for (uint64_t a : {2ull, 325ull, 9375ull, 28178ull, 450775ull, 9780504ull, 1795265022ull}) {
+        if (a % n == 0ull) continue;
         if (!mr_witness(a, M, minus_one, d, s)) return false;
     }
     return true;

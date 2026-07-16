@@ -27,8 +27,6 @@ int main(){
     for (uint64_t i = start; i < start + primorial; ++i)
         if (std::gcd(i, primorial) == 1) coprimes.push_back(i);
 
-    // Колесо = разности между соседними взаимно простыми; последняя замыкает период
-    // (от последнего обратно к первому следующего периода: start + primorial - last).
     std::print("{{");
     for (size_t i = 1; i < coprimes.size(); ++i)
         std::print("{}, ", coprimes[i] - coprimes[i - 1]);
