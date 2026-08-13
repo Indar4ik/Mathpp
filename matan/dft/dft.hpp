@@ -7,6 +7,8 @@
 #include <numbers>
 #include <utility>
 #include <vector>
+#include <omp.h>
+#include "../../number_theory/factorization/fctr.hpp"
 
 namespace fft {
 
@@ -28,9 +30,8 @@ inline void zero_pad(std::vector<cd>& arr) noexcept {
 
 // Передискретизация замкнутого контура до степени двойки без искажения формы.
 // В отличие от zero_pad (который дописывает нули и заставляет эпициклы танцевать
-// вокруг нуля, а заодно расстраивает соответствие бин<->гармоника), здесь линейно
-// интерполируется та же кривая в N = bit_ceil точек, равномерно по параметру. Кривая та же,
-// меняется только число отсчётов, поэтому бин i по-прежнему отвечает гармонике i.
+// вокруг нуля), здесь линейно интерполируется та же кривая в N = bit_ceil точек, равномерно по параметру.
+// Кривая та же, меняется только число отсчётов, поэтому бин i по-прежнему отвечает гармонике i.
 inline void resample_pow2(std::vector<cd>& c, size_t &n) noexcept {
     const size_t P = c.size();
     if (P < 2) return;
@@ -132,6 +133,121 @@ inline void fft(std::vector<cd>& arr, const Plan& plan) noexcept {
             }
         }
     }
+}
+
+struct NTTPlan {
+    size_t n;
+    std::vector<size_t> revers_idx;
+    std::vector<uint64_t> twiddles;
+
+    explicit NTTPlan(size_t N) noexcept : n(N){
+        [[assume((n & (n - 1)) == 0)]];
+        [[assume(n >= 2)]];
+        constexpr uint64_t mod = 469762047;
+        static mont M(mod);
+        revers_idx.resize(n, 0);
+        twiddles.resize(n / 2);
+
+        size_t* __restrict rev = revers_idx.data();
+        for (size_t i = 1, j = 0; i < n; ++i) {
+            size_t bit = n >> 1;
+            for (; j & bit; bit >>= 1) j ^= bit;
+            j ^= bit;
+            rev[i] = j;
+        }
+
+        uint64_t* __restrict tw = twiddles.data();
+        const uint64_t g = M.pow(M.pow(M.to(3), (mod - 1ull) / N), mod - 2ull);
+        for (size_t i = 0; i < n / 2; ++i) {
+            tw[i] = M.pow(g, i);
+        }
+    }
+};
+
+// Многопоточный прямой БПФ (OpenMP). Один parallel-регион на весь вызов, чтобы не
+// платить fork/join на каждой из log2(n) стадий. Ранние стадии (много блоков)
+// распараллеливаются по блокам, поздние (мало блоков, но большой half) - по j.
+// Для мелких n накладные не окупаются -> делегируем в серийную fft().
+inline void fft_mt(std::vector<cd>& arr, const Plan& plan) noexcept {
+    const size_t n = plan.n;
+    if (n < (1u << 15)) { fft(arr, plan); return; }
+    [[assume((n & (n - 1)) == 0)]];
+    [[assume(n >= 2)]];
+
+    cd* __restrict a = arr.data();
+    const size_t* __restrict rev = plan.revers_idx.data();
+    const cd* __restrict tw = plan.twiddles.data();
+
+#ifdef _OPENMP
+    const size_t nthreads = static_cast<size_t>(omp_get_max_threads());
+#else
+    const size_t nthreads = 1;
+#endif
+
+    #pragma omp parallel
+    {
+        // Бит-реверсная перестановка: пары {i, rev[i]} не пересекаются -> без гонок.
+        #pragma omp for schedule(static)
+        for (size_t i = 0; i < n; ++i) if (i < rev[i]) std::swap(a[i], a[rev[i]]);
+
+        // Вырожденный случай - бабочки длины 2
+        #pragma omp for schedule(static)
+        for (size_t i = 0; i < n; i += 2) {
+            cd u = a[i];
+            cd v = a[i + 1];
+            a[i] = u + v; a[i + 1] = u - v;
+        }
+
+        // Вырожденный случай - бабочки длины 4
+        #pragma omp for schedule(static)
+        for (size_t i = 0; i < n; i += 4) {
+            cd u1 = a[i];
+            cd u2 = a[i + 1];
+            cd v1 = a[i + 2];
+            cd v2 = {a[i + 3].imag(), -a[i + 3].real()};
+            a[i] = u1 + v1; a[i + 1] = u2 + v2;
+            a[i + 2] = u1 - v1; a[i + 3] = u2 - v2;
+        }
+
+        // Бабочки по каждой паре с увеличивающейся длиной 8 -> 16 -> 32...
+        for (size_t len = 8; len <= n; len <<= 1) {
+            const size_t half = len >> 1;
+            const size_t step = n / len;
+            const size_t blocks = n / len;
+
+            if (blocks >= nthreads) {
+                // Достаточно блоков -> параллель по внешнему циклу (блокам)
+                #pragma omp for schedule(static)
+                for (size_t b = 0; b < blocks; ++b) {
+                    const size_t i = b * len;
+                    #pragma clang loop vectorize(enable) interleave(enable)
+                    for (size_t j = 0; j < half; ++j) {
+                        cd w = tw[j * step];
+                        cd u = a[i + j], v = a[i + j + half] * w;
+                        a[i + j] = u + v;
+                        a[i + j + half] = u - v;
+                    }
+                }
+            } else {
+                // Мало блоков, но большой half -> параллель по j внутри блока
+                for (size_t i = 0; i < n; i += len) {
+                    #pragma omp for schedule(static)
+                    for (size_t j = 0; j < half; ++j) {
+                        cd w = tw[j * step];
+                        cd u = a[i + j], v = a[i + j + half] * w;
+                        a[i + j] = u + v;
+                        a[i + j + half] = u - v;
+                    }
+                }
+            }
+        }
+    }
+}
+
+inline void fft_mt(std::vector<cd>& arr) noexcept {
+    const size_t n = arr.size();
+    if (n <= 1) return;
+    fft_mt(arr, Plan(n));
 }
 
 // Обратный итеративный Кули-Тьюки O(n log n). arr.size() должен совпадать с plan.n.

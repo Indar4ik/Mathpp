@@ -16,6 +16,7 @@ matan/dft/fourierPortrait/*.png
 matan/dft/fourierPortrait/points
 matan/dft/fourierPortrait/points.txt
 matan/dft/dft_examples.hpp
+matan/dft/dft6.hpp
 
 build/
 bench/

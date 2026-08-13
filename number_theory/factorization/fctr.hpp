@@ -65,7 +65,7 @@ struct mont {
     }
 
     uint64_t mul(uint64_t a, uint64_t b) const noexcept { return redc((__uint128_t)a * b); }
-    uint64_t to(uint64_t a)  const noexcept { return mul(a, r2); }   // a -> a*R mod m
+    uint64_t to(uint64_t a) const noexcept { return mul(a, r2); }   // a -> a*R mod m
     uint64_t from(uint64_t a) const noexcept { return redc(a); }     // a*R -> a mod m
 
     // a^e mod n, вход/выход в Montgomery-форме.
