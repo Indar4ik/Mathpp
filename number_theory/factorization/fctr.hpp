@@ -18,6 +18,16 @@ inline uint64_t inv_mod2_64(uint64_t x) noexcept {
     return y;
 }
 
+// Вспомогательная функция: x^{-1} mod 2^32 (нечётное x).
+inline uint32_t inv_mod2_32(uint32_t x) noexcept {
+    uint32_t y = x;
+    y *= 2 - x * y;
+    y *= 2 - x * y;
+    y *= 2 - x * y;
+    y *= 2 - x * y;
+    return y;
+}
+
 inline uint64_t mulmod(uint64_t a, uint64_t b, uint64_t m) noexcept {
     [[assume((m & 1ull) == 1ull)]];
     return static_cast<__uint128_t>(a) * b % m;
@@ -38,30 +48,46 @@ inline uint64_t powmod(uint64_t a, uint64_t e, uint64_t m) noexcept {
 // Все значения внутри хранятся в форме a_bar = a * R mod n; константы считаются раз на n.
 struct mont {
     uint64_t m;      // модуль (нечётный)
-    uint64_t m_inv;  // -m^{-1} mod 2^64
+    uint64_t m_inv;  // m^{-1} mod 2^64
     uint64_t r2;     // R^2 mod m   (для перевода в форму)
     uint64_t one;    // R   mod m   (Montgomery-форма единицы)
 
     explicit mont(uint64_t mod) noexcept : m(mod) {
         [[assume((m & 1ull) == 1ull)]];
-        m_inv = -inv_mod2_64(m);                     // m_inv * m == -1 (mod 2^64)
+        m_inv = inv_mod2_64(m);                      // m_inv * m == 1 (mod 2^64)
         one = (-m) % m;                                // R mod m = (2^64 - m mod m) = (-m) mod m
         r2 = static_cast<__uint128_t>(one) * one % m;  // (R mod m)^2 mod m = R^2 mod m
     }
 
     // REDC: по x < m*R возвращает x * R^{-1} mod m в [0, m).
+    // Вычитательная форма: t = lo(x) * m^{-1}, тогда t*m == x (mod 2^64), то есть
+    // младшие лимбы x и t*m совпадают ТОЧНО -> при вычитании они гасятся без заёма,
+    // а частное (x - t*m)/R равно разности старших лимбов и лежит в (-m, m).
+    // Переполнения за 128 бит здесь не бывает по построению (в отличие от формы x + t*m,
+    // где при m ~ 2^64 приходится отдельно ловить перенос), поэтому хвост - ровно
+    // sub + cmov + add вместо add/adc + cmp/sbb + двух cmov.
     uint64_t redc(__uint128_t x) const noexcept {
-        // t: R | (x + t*m)
         uint64_t t = static_cast<uint64_t>(x) * m_inv;
-        // t*m < m*R, значит sum < 2*m*R, что при m ~ 2^64 выходит за 2^128 -> ловим перенос явно (adc в asm).
-        __uint128_t tm = static_cast<__uint128_t>(t) * m;
-        __uint128_t sum = x + tm;
-        uint64_t r = static_cast<uint64_t>(sum >> 64);
-        // Частное в [0, 2m): вычесть m нужно, если r >= m ЛИБО было переполнение за 128 бит.
-        // clang быстрее на REDC
+        uint64_t th = static_cast<uint64_t>((static_cast<__uint128_t>(t) * m) >> 64);
+        uint64_t r;
+        bool borrow = __builtin_sub_overflow(static_cast<uint64_t>(x >> 64), th, &r);
+        return borrow ? r + m : r;  // ушли ниже нуля -> возвращаем в [0, m)
+    }
+
+    // Сложение и вычитание по модулю: входы в [0, m), выход в [0, m).
+    // Montgomery-форма линейна, поэтому одни и те же add/sub годятся и для обычных
+    // вычетов, и для значений в форме.
+    uint64_t add(uint64_t a, uint64_t b) const noexcept {
+        // a + b - m считаем как a - (m - b): так не переполняем 64 бита даже при m ~ 2^64.
         uint64_t d;
-        bool borrow = __builtin_sub_overflow(r, m, &d);  // borrow == (r < m)
-        return (borrow & (sum >= x)) ? r : d;            // нет переполнения и r<m -> оставляем r
+        bool borrow = __builtin_sub_overflow(a, m - b, &d);
+        return borrow ? d + m : d;  // a + b < m -> вернуть a + b
+    }
+
+    uint64_t sub(uint64_t a, uint64_t b) const noexcept {
+        uint64_t d;
+        bool borrow = __builtin_sub_overflow(a, b, &d);
+        return borrow ? d + m : d;
     }
 
     uint64_t mul(uint64_t a, uint64_t b) const noexcept { return redc((__uint128_t)a * b); }
@@ -73,6 +99,67 @@ struct mont {
         uint64_t r = one;
         while (e) {
             if (e & 1ull) r = mul(r, a);
+            a = mul(a, a);
+            e >>= 1;
+        }
+        return r;
+    }
+};
+
+// Montgomery-арифметика по нечётному модулю n (R = 2^32).
+struct mont32 {
+    uint32_t m;      // модуль (нечётный)
+    uint32_t m_inv;  // m^{-1} mod 2^32
+    uint32_t r2;     // R^2 mod m   (для перевода в форму)
+    uint32_t one;    // R   mod m   (Montgomery-форма единицы)
+
+    explicit mont32(uint32_t mod) noexcept : m(mod) {
+        [[assume((m & 1ull) == 1ull)]];
+        m_inv = inv_mod2_32(m);                      // m_inv * m == 1 (mod 2^32)
+        one = (-m) % m;                                // R mod m = (2^32 - m mod m) = (-m) mod m
+        r2 = static_cast<uint64_t>(one) * one % m;  // (R mod m)^2 mod m = R^2 mod m
+    }
+
+    // REDC: по x < m*R возвращает x * R^{-1} mod m в [0, m).
+    // Вычитательная форма: t = lo(x) * m^{-1}, тогда t*m == x (mod 2^32), то есть
+    // младшие лимбы x и t*m совпадают ТОЧНО -> при вычитании они гасятся без заёма,
+    // а частное (x - t*m)/R равно разности старших лимбов и лежит в (-m, m).
+    // Переполнения за 64 бит здесь не бывает по построению (в отличие от формы x + t*m,
+    // где при m ~ 2^32 приходится отдельно ловить перенос), поэтому хвост - ровно
+    // sub + cmov + add вместо add/adc + cmp/sbb + двух cmov.
+    uint32_t redc(uint64_t x) const noexcept {
+        uint32_t t = static_cast<uint32_t>(x) * m_inv;
+        uint32_t th = static_cast<uint32_t>((static_cast<uint64_t>(t) * m) >> 32);
+        uint32_t r;
+        bool borrow = __builtin_sub_overflow(static_cast<uint32_t>(x >> 32), th, &r);
+        return borrow ? r + m : r;  // ушли ниже нуля -> возвращаем в [0, m)
+    }
+
+    // Сложение и вычитание по модулю: входы в [0, m), выход в [0, m).
+    // Montgomery-форма линейна, поэтому одни и те же add/sub годятся и для обычных
+    // вычетов, и для значений в форме.
+    uint32_t add(uint32_t a, uint32_t b) const noexcept {
+        // a + b - m считаем как a - (m - b): так не переполняем 32 бита даже при m ~ 2^32.
+        uint32_t d;
+        bool borrow = __builtin_sub_overflow(a, m - b, &d);
+        return borrow ? d + m : d;  // a + b < m -> вернуть a + b
+    }
+
+    uint32_t sub(uint32_t a, uint32_t b) const noexcept {
+        uint32_t d;
+        bool borrow = __builtin_sub_overflow(a, b, &d);
+        return borrow ? d + m : d;
+    }
+
+    uint32_t mul(uint32_t a, uint32_t b) const noexcept { return redc((uint64_t)a * b); }
+    uint32_t to(uint32_t a) const noexcept { return mul(a, r2); }   // a -> a*R mod m
+    uint32_t from(uint32_t a) const noexcept { return redc(a); }     // a*R -> a mod m
+
+    // a^e mod n, вход/выход в Montgomery-форме.
+    uint32_t pow(uint32_t a, uint32_t e) const noexcept {
+        uint32_t r = one;
+        while (e) {
+            if (e & 1u) r = mul(r, a);
             a = mul(a, a);
             e >>= 1;
         }
@@ -93,7 +180,6 @@ inline bool mr_witness(uint64_t a, const mont& M, uint64_t minus_one, uint64_t d
 }
 
 // Детерминированный тест простоты для всего диапазона uint64_t
-// Набор из 12 оснований {2,3,...,37} доказанно покрывает все n < 2^64
 inline bool is_prime(uint64_t n) noexcept {
     if (n < 2) return false;
     #pragma clang loop unroll(full)
@@ -110,7 +196,7 @@ inline bool is_prime(uint64_t n) noexcept {
     mont M(n);
     uint64_t minus_one = n - M.one;                     // (n-1) в Montgomery-форме = -1
     for (uint64_t a : {2ull, 325ull, 9375ull, 28178ull, 450775ull, 9780504ull, 1795265022ull}) {
-        if (a % n == 0ull) continue;
+        if (a % n == 0ull) continue; // Разве не лишняя строка?
         if (!mr_witness(a, M, minus_one, d, s)) return false;
     }
     return true;
@@ -342,7 +428,7 @@ inline uint64_t pollard_pm1(uint64_t n, uint32_t B) noexcept {
     const std::vector<uint64_t>& powers = pm1_powers(B);
 
     mont M(n);
-    uint64_t a = M.to(2ull);                        // основание a = 2 в Montgomery-форме
+    uint64_t a = M.add(M.one, M.one);                        // основание a = 2 в Montgomery-форме
     const size_t sz = powers.size();
     for (size_t i = 0; i < sz; i += BATCH) {
         const size_t block_end = std::min(i + BATCH, sz);
