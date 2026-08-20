@@ -386,8 +386,7 @@ struct NTTPlan {
         size_t *__restrict rev = revers_idx.data();
         for (size_t i = 1, j = 0; i < n; ++i) {
             size_t bit = n >> 1;
-            for (; j & bit; bit >>= 1)
-                j ^= bit;
+            for (; j & bit; bit >>= 1) j ^= bit;
             j ^= bit;
             rev[i] = j;
         }
@@ -428,7 +427,146 @@ struct NTTPlan {
     }
 };
 
+// Порог, до которого выгоден Шоуп. Его таблица твиддлов вдвое толще (пары
+// (w, w') - 16 байт против 8), и как только она перестаёт помещаться в L2,
+// выигрыш в арифметике съедается лишним трафиком. Замерено на i5-13400F
+// (L2 = 1.25 МБ на P-ядро): до 2^16 Шоуп даёт ~1.20x к строгому, на 2^18 уже
+// 0.87x, на 2^22 - 0.64x. Выше порога берём ленивый Montgomery.
+inline constexpr size_t NTT_SHOUP_MAX = size_t{1} << 16;
+
+// Таблицы для умножения Шоупа: пары (w, w') подряд, чтобы обе половины пары
+// приходили одной кэш-линией. w здесь ОБЫЧНЫЙ вычет (не Montgomery-форма),
+// w' = floor(w*2^64/p). Держим отдельно от плана: Шоуп стоит вдвое больше памяти
+// на твиддлы, и платить за это должен только тот, кто им пользуется.
+struct ShoupTables {
+    std::vector<uint64_t> fwd;  // [w0, w0', w1, w1', ...]
+    std::vector<uint64_t> inv;
+
+    explicit ShoupTables(const NTTPlan& plan) {
+        const size_t H = plan.n / 2;
+        const mont& M = plan.M;
+        fwd.resize(2 * H);
+        inv.resize(2 * H);
+        for (size_t i = 0; i < H; ++i) {
+            const uint64_t wm = plan.twiddles[i];       // Montgomery-форма
+            fwd[2 * i] = M.from(wm);                    // обычный вычет
+            fwd[2 * i + 1] = M.shoup(wm);               // floor(w*2^64/p), без деления
+            const uint64_t wim = plan.twiddles_inv[i];
+            inv[2 * i] = M.from(wim);
+            inv[2 * i + 1] = M.shoup(wim);
+        }
+    }
+};
+
 namespace detail {
+
+// --- Ленивые бабочки -------------------------------------------------------
+// Схема Харви: значения гуляют в [0, 4p), полностью приводим один раз в конце.
+// Экономия в том, что modular add/sub (каждый - вычитание + cmov + сложение)
+// вырождаются в голое сложение и в "вычесть и добавить 2p", а REDC теряет
+// финальное условное вычитание. Требуется p < 2^62: тогда вход бабочки < 4p
+// даёт произведение < 4p^2 < p*2^64, что укладывается в контракт REDC.
+//
+// Инвариант по стадиям:
+//   u := a[i+j], приводим до [0, 2p) одним сравнением;
+//   v := ленивое умножение, само по себе уже в [0, 2p);
+//   вверх u + v            -> [0, 4p)
+//   вниз  u - v + 2p       -> [0, 4p)
+
+// Финальное приведение [0, 4p) -> [0, p): два безусловных вычитания.
+inline void reduce_full(uint64_t* __restrict a, size_t n, uint64_t p) noexcept {
+    const uint64_t p2 = 2 * p;
+    for (size_t i = 0; i < n; ++i) {
+        uint64_t x = a[i];
+        if (x >= p2) x -= p2;
+        if (x >= p) x -= p;
+        a[i] = x;
+    }
+}
+
+// Ленивое NTT на Montgomery. tw - твиддлы в Montgomery-форме (как в NTTPlan).
+inline void ntt_lazy_impl(uint64_t* __restrict a, const NTTPlan& plan, const uint64_t* __restrict tw) noexcept {
+    const size_t n = plan.n;
+    [[assume((n & (n - 1)) == 0)]];
+    [[assume(n >= 2)]];
+    const mont M = plan.M;
+    const uint64_t p = M.m, p2 = 2 * p;
+    const size_t* __restrict rev = plan.revers_idx.data();
+
+    for (size_t i = 0; i < n; ++i) if (i < rev[i]) std::swap(a[i], a[rev[i]]);
+
+    // Бабочки длины 2: вход ещё в [0, p), поэтому приводить нечего, а выход в [0, 2p).
+    for (size_t i = 0; i < n; i += 2) {
+        const uint64_t u = a[i], v = a[i + 1];
+        a[i] = u + v;
+        a[i + 1] = u - v + p;
+    }
+
+    for (size_t len = 4; len <= n; len <<= 1) {
+        const size_t half = len >> 1;
+        const size_t step = n / len;
+        for (size_t i = 0; i < n; i += len) {
+            // j = 0: твиддл равен 1, но привести надо обе половины, иначе
+            // сумма двух значений из [0, 4p) вылезет за инвариант.
+            uint64_t u = a[i], v = a[i + half];
+            if (u >= p2) u -= p2;
+            if (v >= p2) v -= p2;
+            a[i] = u + v;
+            a[i + half] = u - v + p2;
+            // AVX2 не умеет 64x64->128, и векторизатор собирает такое умножение из
+            // 32-битных кусков, гоняя значения между GPR и векторными регистрами.
+            // Для модулярной арифметики это чистая потеря - запрещаем явно.
+            #pragma clang loop vectorize(disable)
+            for (size_t j = 1; j < half; ++j) {
+                uint64_t u = a[i + j];
+                if (u >= p2) u -= p2;
+                const uint64_t v = M.mul_lazy(a[i + j + half], tw[j * step]);
+                a[i + j] = u + v;
+                a[i + j + half] = u - v + p2;
+            }
+        }
+    }
+    reduce_full(a, n, p);
+}
+
+// Ленивое NTT на умножении Шоупа. t - таблица пар (w, w') из ShoupTables.
+inline void ntt_shoup_impl(uint64_t* __restrict a, const NTTPlan& plan, const uint64_t* __restrict t) noexcept {
+    const size_t n = plan.n;
+    [[assume((n & (n - 1)) == 0)]];
+    [[assume(n >= 2)]];
+    const uint64_t p = plan.M.m, p2 = 2 * p;
+    const size_t* __restrict rev = plan.revers_idx.data();
+
+    for (size_t i = 0; i < n; ++i) if (i < rev[i]) std::swap(a[i], a[rev[i]]);
+
+    for (size_t i = 0; i < n; i += 2) {
+        const uint64_t u = a[i], v = a[i + 1];
+        a[i] = u + v;
+        a[i + 1] = u - v + p;
+    }
+
+    for (size_t len = 4; len <= n; len <<= 1) {
+        const size_t half = len >> 1;
+        const size_t step = n / len;
+        for (size_t i = 0; i < n; i += len) {
+            uint64_t u = a[i], v = a[i + half];
+            if (u >= p2) u -= p2;
+            if (v >= p2) v -= p2;
+            a[i] = u + v;
+            a[i + half] = u - v + p2;
+            #pragma clang loop vectorize(disable)
+            for (size_t j = 1; j < half; ++j) {
+                uint64_t u = a[i + j];
+                if (u >= p2) u -= p2;
+                const size_t k = 2 * (j * step);
+                const uint64_t v = mont::shoup_mul_lazy(a[i + j + half], t[k], t[k + 1], p);
+                a[i + j] = u + v;
+                a[i + j + half] = u - v + p2;
+            }
+        }
+    }
+    reduce_full(a, n, p);
+}
 
 // Тело преобразования: направление задаётся только таблицей твиддлов.
 // Данные - обычные вычеты в [0, p), твиддлы - в Montgomery-форме. Тогда
@@ -460,6 +598,7 @@ inline void ntt_impl(uint64_t *__restrict a, const NTTPlan &plan, const uint64_t
             uint64_t u = a[i], v = a[i + half];
             a[i] = M.add(u, v);
             a[i + half] = M.sub(u, v);
+            #pragma clang loop vectorize(disable)
             for (size_t j = 1; j < half; ++j) {
                 const uint64_t w = tw[j * step];
                 const uint64_t u = a[i + j], v = M.mul(a[i + j + half], w);
@@ -489,6 +628,37 @@ inline void intt(std::vector<uint64_t> &arr, const NTTPlan &plan) noexcept {
     for (uint64_t &x : arr) x = M.mul(x, n_inv);
 }
 
+// Ленивые версии: значения гуляют в [0, 4p), приведение одно на весь проход.
+// Требуют p < 2^62; контракт снаружи тот же - вход и выход вычеты в [0, p).
+inline void ntt_lazy(std::vector<uint64_t> &arr, const NTTPlan &plan) noexcept {
+    if (plan.n <= 1) return;
+    detail::ntt_lazy_impl(arr.data(), plan, plan.twiddles.data());
+}
+
+inline void intt_lazy(std::vector<uint64_t> &arr, const NTTPlan &plan) noexcept {
+    if (plan.n <= 1) return;
+    detail::ntt_lazy_impl(arr.data(), plan, plan.twiddles_inv.data());
+
+    const mont M = plan.M;
+    const uint64_t n_inv = plan.n_inv;
+    for (uint64_t &x : arr) x = M.mul(x, n_inv);
+}
+
+// То же, но умножение на твиддл - по Шоупу (нужны ShoupTables).
+inline void ntt_shoup(std::vector<uint64_t> &arr, const NTTPlan &plan, const ShoupTables &st) noexcept {
+    if (plan.n <= 1) return;
+    detail::ntt_shoup_impl(arr.data(), plan, st.fwd.data());
+}
+
+inline void intt_shoup(std::vector<uint64_t> &arr, const NTTPlan &plan, const ShoupTables &st) noexcept {
+    if (plan.n <= 1) return;
+    detail::ntt_shoup_impl(arr.data(), plan, st.inv.data());
+
+    const mont M = plan.M;
+    const uint64_t n_inv = plan.n_inv;
+    for (uint64_t &x : arr) x = M.mul(x, n_inv);
+}
+
 // Удобные обёртки для разового преобразования (строят план на месте).
 inline void ntt(std::vector<uint64_t> &arr, uint64_t mod = NTT_P62) noexcept {
     if (arr.size() <= 1) return;
@@ -514,8 +684,7 @@ inline std::vector<cd> polynom_mul(std::vector<cd> a, std::vector<cd> b) {
     Plan plan(n);
     fft(a, plan);
     fft(b, plan);
-    for (size_t i = 0; i < n; ++i)
-        c[i] = a[i] * b[i];
+    for (size_t i = 0; i < n; ++i) c[i] = a[i] * b[i];
     ifft(c, plan);
 
     c.resize(k);
@@ -535,20 +704,16 @@ inline std::vector<double> polynom_mul(std::vector<double> a, std::vector<double
     Plan plan(new_size);
 
     // Упаковка двух вещественных многочленов в один комплексный: P = a + i*b.
-    for (size_t i = 0; i < n; ++i)
-        ab[i].real(a[i]);
-    for (size_t i = 0; i < m; ++i)
-        ab[i].imag(b[i]);
+    for (size_t i = 0; i < n; ++i) ab[i].real(a[i]);
+    for (size_t i = 0; i < m; ++i) ab[i].imag(b[i]);
 
     fft(ab, plan);
     // P = a + i*b    =>    P^2 = a^2 - b^2 + 2i*(a*b) -> a*b=Im(P^2)*0.5
     // IFFT(FFT(a)*FFT(b))= a * b свёртка
-    for (std::complex<double> &z : ab)
-        z = z * z;
+    for (std::complex<double> &z : ab) z = z * z;
     ifft(ab, plan);
 
-    for (size_t i = 0; i < k; ++i)
-        c[i] = ab[i].imag() * 0.5;
+    for (size_t i = 0; i < k; ++i) c[i] = ab[i].imag() * 0.5;
     return c;
 }
 
@@ -574,10 +739,20 @@ inline std::vector<uint64_t> polynom_mul(std::vector<uint64_t> a, std::vector<ui
     a.resize(n, 0ull);
     b.resize(n, 0ull);
 
-    ntt(a, plan);
-    ntt(b, plan);
-    for (size_t i = 0; i < n; ++i) a[i] = M.mul(a[i], b[i]);
-    intt(a, plan);
+    // До NTT_SHOUP_MAX таблица пар (w, w') ещё держится в кэше и Шоуп выигрывает
+    // ~1.20x; выше - платим за неё трафиком, и лучше ленивый Montgomery.
+    if (n <= NTT_SHOUP_MAX) {
+        const ShoupTables st(plan);
+        ntt_shoup(a, plan, st);
+        ntt_shoup(b, plan, st);
+        for (size_t i = 0; i < n; ++i) a[i] = M.mul(a[i], b[i]);
+        intt_shoup(a, plan, st);
+    } else {
+        ntt_lazy(a, plan);
+        ntt_lazy(b, plan);
+        for (size_t i = 0; i < n; ++i) a[i] = M.mul(a[i], b[i]);
+        intt_lazy(a, plan);
+    }
 
     a.resize(k);
     return a;
