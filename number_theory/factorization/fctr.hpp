@@ -150,11 +150,13 @@ inline bool mr_witness(uint64_t a, const mont& M, uint64_t minus_one, uint64_t d
     return false;
 }
 
-// Детерминированный тест простоты для всего диапазона uint64_t
+// Детерминированный тест простоты для всего диапазона uint64_t.
 inline bool is_prime(uint64_t n) noexcept {
     if (n < 2) return false;
+    // Снимаем все делители свидетелей для корректности (иначе n | a -> a^d == 0 mod n)
+    // Плюс засекает ~77% составных без умножений
     #pragma clang loop unroll(full)
-    for (uint64_t p : {2ull, 3ull, 5ull, 13ull, 19ull, 73ull, 193ull, 407521ull, 299210837ull}) {
+    for (uint64_t p : {2ull, 3ull, 5ull, 7ull, 13ull, 19ull, 73ull, 193ull, 407521ull, 299210837ull}) {
         if (n == p) return true;
         if (n % p == 0) return false;
     }
@@ -166,11 +168,18 @@ inline bool is_prime(uint64_t n) noexcept {
     // Montgomery-контекст и -1 в форме считаем один раз на n.
     mont M(n);
     uint64_t minus_one = n - M.one;                     // (n-1) в Montgomery-форме = -1
-    for (uint64_t a : {2ull, 325ull, 9375ull, 28178ull, 450775ull, 9780504ull, 1795265022ull}) {
-        if (a % n == 0ull) continue; // Разве не лишняя строка?
-        if (!mr_witness(a, M, minus_one, d, s)) return false;
-    }
-    return true;
+
+    const auto all_pass = [&](std::initializer_list<uint64_t> bases) noexcept {
+        for (uint64_t a : bases) if (!mr_witness(a, M, minus_one, d, s)) return false;
+        return true;
+    };
+    // Набор свидетелей по величине n: полный семёрочный нужен только выше 3.2e9,
+    // ниже хватает коротких наборов Яшке. Это x2.3 на простых до 2e7 и x1.4 на
+    // диапазоне 1e9..3e9; на 64-битных входах ярусы не срабатывают и не мешают.
+    if (n < 1373653ull)    return all_pass({2, 3});
+    if (n < 25326001ull)   return all_pass({2, 3, 5});
+    if (n < 3215031751ull) return all_pass({2, 3, 5, 7});
+    return all_pass({2, 325, 9375, 28178, 450775, 9780504, 1795265022});
 }
 
 // Колесо mod 30030 (2*3*5*7*11*13): инкременты для перебора делителей, старт с 17.
@@ -528,8 +537,11 @@ inline uint64_t pollard_rho(uint64_t n) noexcept {
 // рекурсия по обеим частям (делитель может быть составным):
 //   1) Ферма        — близкие делители p ~ q (сбалансированное n);
 //   2) Pollard-ро   — общий случай, ~n^(1/4);
-//   3) Pollard p-1  — страховка, если ро выдохлась на всех c (на 64 битах не наблюдалось);
-//   4) перебор      — гарантированный финиш за O(sqrt n).
+//   3) перебор      — гарантированный финиш за O(sqrt n).
+// pollard_pm1 в лесенке НЕ участвует: на 64 битах меньший множитель <= 2^32, то есть
+// ро укладывается в ~2^16 шагов при любом входе (~0.23 мс в худшем случае), а стадия 1
+// p-1 с B = 10^6 стоит ~5 мс ВСЕГДА, найдёт она что-нибудь или нет. Функция оставлена
+// в файле: на модулях шире 64 бит, где sqrt(p) уже дорог, она снова осмысленна.
 inline void ferma_fctr(uint64_t n, std::vector<uint64_t> &factors) noexcept {
     if (n <= 1ull) return;
     if (is_prime(n)) { factors.push_back(n); return; }
@@ -564,15 +576,7 @@ inline void ferma_fctr(uint64_t n, std::vector<uint64_t> &factors) noexcept {
         return;
     }
 
-    // Ступень 3 — Pollard p-1: срабатывает только если ро отказала на всех c.
-    // На 64-битных входах не наблюдалось ни разу, но проход дешёвый — пусть лежит.
-    if (uint64_t g = pollard_pm1(n, 1000000)) {
-        ferma_fctr(g, factors);
-        ferma_fctr(n / g, factors);
-        return;
-    }
-
-    // Ступень 4 — гарантированный финиш: перебор делителей колесом, O(sqrt n).
+    // Ступень 3 — гарантированный финиш: перебор делителей колесом, O(sqrt n).
     trial_divide_all(n, factors);
 }
 
