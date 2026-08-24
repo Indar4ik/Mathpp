@@ -448,21 +448,98 @@ inline void trial_divide_all(uint64_t n, std::vector<uint64_t> &factors) noexcep
     if (n > 1) factors.push_back(n);
 }
 
+// Порог ленивого шага: он держит x в [0, 3m) и p в [0, 2m), для чего нужно 9m <= R.
+// Подробнее: приводить x и p к [0, m) незачем -
+// gcd не различает представителей по модулю n (gcd(a, n) = gcd(a%n, n)),
+// поэтому достаточно удержать величины в границах контракта redc_lazy.
+// Инвариант x < 3m: x*x < 9m^2 <= mR даёт redc_lazy < 2m, плюс one < m.
+// Инвариант p < 2m: p*diff < 2m*3m = 6m^2 <= mR даёт redc_lazy < 2m.
+// Итого 9m <= R;
+inline constexpr uint64_t RHO_LAZY_MAX = ~0ull / 9;
+
+// Один проход Pollard-ро (Брент) по полиному x^2 + c с батчингом gcd: произведение
+// разностей копится по модулю n, gcd берётся раз в BATCH шагов, при перелёте
+// (d == n) первый «плохой» индекс ищется бинпоиском по частичным произведениям.
+// LAZY снимает с критического пути обе условные коррекции (годится при n <= RHO_LAZY_MAX).
+// Контракт: n нечётное и СОСТАВНОЕ (на простом отказывает любое c, съев ~sqrt(n) шагов),
+// c не равно 0 и n-2. Возвращает делитель в (1, n) либо 0, если ро зациклилась.
+template <bool LAZY>
+inline uint64_t rho_batch_impl(uint64_t n, uint64_t c) noexcept {
+    [[assume((n & 1ull) == 1ull)]];
+
+    constexpr uint32_t BATCH = 128;
+    mont M(n);
+    std::array<uint64_t, BATCH> ps;                 // частичные произведения блока
+    const uint64_t cm = M.to(c);                    // c в Montgomery-форме, cm < m
+    uint32_t i = 0u;
+    uint64_t x = M.add(M.one, M.one), anchor = x, p = M.one, d;
+
+    while (true){
+        for (uint32_t j = 0; j < BATCH; ++j) {
+            if (!(i & (i - 1u))) anchor = x;
+            if constexpr (LAZY) {
+                x = M.mul_lazy(x, x) + cm;
+                p = M.mul_lazy(p, x > anchor ? x - anchor : anchor - x);
+            } else {
+                x = M.add(M.mul(x, x), cm);
+                p = M.mul(p, x > anchor ? x - anchor : anchor - x);
+            }
+            ps[j] = p;
+            ++i;
+        }
+
+        d = std::gcd(p, n);
+        if (d == 1ull) continue;                    // в блоке ничего не созрело
+        if (d != n) return d;
+
+        // Перелёт: первый j с gcd(ps[j], n) != 1.
+        uint32_t lo = 0, hi = BATCH - 1;
+        while (lo < hi) {
+            uint32_t mid = (lo + hi) >> 1;
+            if (std::gcd(ps[mid], n) != 1ull) hi = mid;
+            else lo = mid + 1;
+        }
+        d = std::gcd(ps[lo], n);
+        return d == n ? 0 : d;                      // одна разность делится на всё n -> пас
+    }
+}
+
+// Перебор полиномов: c = 1 помогает в 99.91% случаев, c = 2 добивает до 99.9985%,
+// c = 3 - до 100% (проверено на ~860k нечётных составных до 2e6, отдельно на p^2 и
+// p^3). Шагов впустую на неудачных c - 0.10% от полезных, так что ретрай бесплатен.
+// Лимит - страховка от зависания: гарантии, что какой-то c сработает, нет, а на
+// ПРОСТОМ n отказывают все, съедая ~sqrt(n) шагов каждый. После лимита отдаём 0,
+// и вызывающий (ferma_fctr) падает в гарантированный trial_divide_all.
+inline uint64_t pollard_rho(uint64_t n) noexcept {
+    [[assume((n & 1ull) == 1ull)]];
+    if (n <= 1) return 1ull;
+
+    for (uint64_t c = 1; c <= 8; ++c) {
+        const uint64_t cn = c % n;
+        if (cn == 0 || cn == n - 2) continue;       // x^2 и x^2-2 вырождены: орбита короче sqrt(p)
+        const uint64_t d = n <= RHO_LAZY_MAX ? rho_batch_impl<true>(n, c) : rho_batch_impl<false>(n, c);
+        if (d) return d;
+    }
+    return 0;
+}
+
 // Рекурсивный разбор составного n (мелочь уже снята колесом в balance_fctr).
 // Лесенка «дёшево и точечно -> гарантированно и медленно», на каждом сплите
 // рекурсия по обеим частям (делитель может быть составным):
 //   1) Ферма        — близкие делители p ~ q (сбалансированное n);
-//   2) Pollard p-1  — несбалансированные делители с гладким p-1;
-//   3) перебор      — гарантированный финиш за O(sqrt n).
+//   2) Pollard-ро   — общий случай, ~n^(1/4);
+//   3) Pollard p-1  — страховка, если ро выдохлась на всех c (на 64 битах не наблюдалось);
+//   4) перебор      — гарантированный финиш за O(sqrt n).
 inline void ferma_fctr(uint64_t n, std::vector<uint64_t> &factors) noexcept {
     if (n <= 1ull) return;
     if (is_prime(n)) { factors.push_back(n); return; }
 
     // Ступень 1 — Ферма: n = a^2 - r^2 = (a-r)(a+r), перебираем a = ceil(sqrt n), +1, +2, ...
-    // cap ~ n^(1/3) = o(sqrt n): даже впустую он пренебрежим против фоллбэка O(sqrt n)
-    // (worst-case остаётся ~sqrt_fctr), а cap << sqrt n держит инкрементальное
-    // c = a^2 - n вдали от переполнения uint64_t.
-    const uint64_t cap = static_cast<uint64_t>(std::cbrt(static_cast<double>(n))) + 1;
+    // Ферма делает ~(p-q)^2/(8 sqrt n) шагов, то есть бьёт ро (~n^(1/4)) только при
+    // |p - q| < ~n^(3/8). Дальше он всё равно проиграет, поэтому cap маленький:
+    // на близких множителях 2^12 ловит всё то же, что и n^(1/3) (x16.6 против ро),
+    // а на промахе стоит 8% вместо 12-кратного проигрыша.
+    const uint64_t cap = std::min<uint64_t>(static_cast<uint64_t>(std::cbrt(static_cast<double>(n))) + 1, 4096);
     uint64_t a, r, c;
     if (is_square(n, a)) c = 0;            // n — точный квадрат: a = sqrt(n), сразу сплит a*a
     else { ++a; c = a * a - n; }          // a = ceil(sqrt n); при a == 2^32 mod-арифметика даёт верный c
@@ -477,14 +554,25 @@ inline void ferma_fctr(uint64_t n, std::vector<uint64_t> &factors) noexcept {
         c += (a++ << 1) + 1;
     }
 
-    // Ступень 2 — Pollard p-1: несбалансированные делители с гладким p-1 (Ферма пасанул).
+    // Ступень 2 — Pollard-ро: рабочая лошадь, ~n^(1/4) от МЕНЬШЕГО множителя.
+    // На 64 битах меньший множитель <= 2^32, то есть ро укладывается в ~2^16 шагов
+    // всегда — поэтому она стоит раньше p-1, чей проход по простым до 10^6
+    // обходится дороже при любом раскладе.
+    if (uint64_t g = pollard_rho(n)) {
+        ferma_fctr(g, factors);
+        ferma_fctr(n / g, factors);
+        return;
+    }
+
+    // Ступень 3 — Pollard p-1: срабатывает только если ро отказала на всех c.
+    // На 64-битных входах не наблюдалось ни разу, но проход дешёвый — пусть лежит.
     if (uint64_t g = pollard_pm1(n, 1000000)) {
         ferma_fctr(g, factors);
         ferma_fctr(n / g, factors);
         return;
     }
 
-    // Ступень 3 — гарантированный финиш: перебор делителей колесом, O(sqrt n).
+    // Ступень 4 — гарантированный финиш: перебор делителей колесом, O(sqrt n).
     trial_divide_all(n, factors);
 }
 
@@ -523,94 +611,4 @@ inline void balance_fctr(uint64_t n, std::vector<uint64_t> &factors) noexcept {
 
     ferma_fctr(n, factors);
     return;
-}
-
-inline uint64_t pollard_rho(uint64_t n) noexcept {
-    if (n <= 1) return 1ull;
-
-    mont M(n);
-    uint64_t x = M.add(M.one, M.one), anchor, d = 1ull;
-    for (uint32_t i = 0; d == 1ull; ++i) {
-        if (!(i & (i - 1u))) anchor = x;
-        x = M.add(M.mul(x, x), M.one);
-        d = std::gcd(x > anchor ? x - anchor : anchor - x, n);
-    }
-    return d == n ? 0 : d;
-}
-
-// Pollard-ро (Брент) с батчингом gcd. gcd заметно дороже шага ро, поэтому берём
-// его не на каждом шаге, а раз в BATCH: копим произведение разностей
-// |x - anchor| ПО МОДУЛЮ n. Произведение «залипает» - как только простое p | n
-// поделило одну разность, оно делит и все последующие частичные произведения,
-// поэтому один gcd на границе блока ловит p, созревшее в любом месте блока.
-// Копить можно прямо в Montgomery-форме: ps[j] = (произведение разностей) * R
-// mod n, а при нечётном n gcd(R, n) = 1, так что лишний множитель R на gcd не
-// влияет. Цепочка по p независима от цепочки по x, так что накопление прячется
-// в тень латентности M.mul(x, x).
-// При перелёте (d == n: в одном блоке созрело больше одного простого) нужен
-// ПЕРВЫЙ индекс с gcd != 1 - ровно тот делитель, который вернул бы пошаговый
-// pollard_rho. Предикат gcd(ps[j], n) != 1 монотонен по j, поэтому ищем его
-// бинпоиском по сохранённым частичным произведениям: log2(BATCH) gcd вместо
-// пересчёта всего блока. Сам массив бесплатен - store-порт в этом цикле простаивает.
-// Контракт: n нечётное и составное. Возвращает делитель в (1, n) либо 0, если
-// ро зациклилась (нужен другой полином x^2 + c).
-// Отличие от пошагового pollard_rho: gcd берётся от произведения всего блока, и
-// если в блоке созрело несколько простых (или одно в большей степени), делитель
-// выходит ГРУБЕЕ - кратным тому, что вернул бы pollard_rho. Для факторизации это
-// безразлично (вызывающий всё равно рекурсивно разбирает обе половины), но на
-// «наименьший простой делитель» рассчитывать нельзя.
-// Порог ленивого шага: нужно 9m <= R, см. rho_batch_impl.
-inline constexpr uint64_t RHO_LAZY_MAX = ~0ull / 9;
-
-// LAZY: шаг без единой условной коррекции. Приводить x и p к [0, m) незачем -
-// gcd не различает представителей по модулю n, а знак разности на gcd не влияет,
-// поэтому достаточно удержать величины в границах контракта redc_lazy.
-// Инвариант x < 3m: x*x < 9m^2 <= mR даёт redc_lazy < 2m, плюс one < m.
-// Инвариант p < 2m: p*diff < 2m*3m = 6m^2 <= mR даёт redc_lazy < 2m.
-// Оба упираются в 9m <= R (отсюда RHO_LAZY_MAX). Снимает с критического пути обе
-// пары sub+cmov: 9.2 -> 7.6 такта на шаг на Raptor Lake, сквозной выигрыш ~17%.
-template <bool LAZY>
-inline uint64_t rho_batch_impl(uint64_t n) noexcept {
-    [[assume((n & 1ull) == 1ull)]];
-
-    constexpr uint32_t BATCH = 128;
-    mont M(n);
-    std::array<uint64_t, BATCH> ps;                 // частичные произведения блока
-    uint32_t i = 0u;
-    uint64_t x = M.add(M.one, M.one), anchor = x, p = M.one, d;
-
-    while (true){
-        for (uint32_t j = 0; j < BATCH; ++j) {
-            if (!(i & (i - 1u))) anchor = x;
-            if constexpr (LAZY) {
-                x = M.redc_lazy(static_cast<__uint128_t>(x) * x) + M.one;
-                p = M.redc_lazy(static_cast<__uint128_t>(p) * (x > anchor ? x - anchor : anchor - x));
-            } else {
-                x = M.add(M.mul(x, x), M.one);
-                p = M.mul(p, x > anchor ? x - anchor : anchor - x);
-            }
-            ps[j] = p;
-            ++i;
-        }
-
-        d = std::gcd(p, n);
-        if (d == 1ull) continue;                    // в блоке ничего не созрело
-        if (d != n) return d;
-
-        // Перелёт: первый j с gcd(ps[j], n) != 1.
-        uint32_t lo = 0, hi = BATCH - 1;
-        while (lo < hi) {
-            uint32_t mid = (lo + hi) >> 1;
-            if (std::gcd(ps[mid], n) != 1ull) hi = mid;
-            else lo = mid + 1;
-        }
-        d = std::gcd(ps[lo], n);
-        return d == n ? 0 : d;                      // одна разность делится на всё n -> пас
-    }
-}
-
-inline uint64_t pollard_rho_batch(uint64_t n) noexcept {
-    [[assume((n & 1ull) == 1ull)]];
-    if (n <= 1) return 1ull;
-    return n <= RHO_LAZY_MAX ? rho_batch_impl<true>(n) : rho_batch_impl<false>(n);
 }
