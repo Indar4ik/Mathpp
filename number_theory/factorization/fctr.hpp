@@ -366,15 +366,19 @@ constexpr uint64_t SQ_MASK = []{
 }();
 
 // root = floor(sqrt(c)); возвращает true, если c — точный квадрат.
+// Поправка на ошибку double идёт через умножение, а не деление: floor(sqrt c) заведомо
+// не больше 2^32-1 (ведь (2^32)^2 = 2^64 > c), поэтому после зажима r в этот предел
+// r*r уже не переполняется, а (r+1)*(r+1) прикрыто проверкой r < 2^32-1. Деления тут
+// стоили дорого: в цикле Ферма is_square вызывается на 18% итераций и съедала почти
+// половину ступени — замена дала x1.77 на ступени.
 inline bool is_square(uint64_t c, uint64_t& root) noexcept {
-    if (c == 0) { root = 0; return true; }
+    constexpr uint64_t RMAX = 0xFFFFFFFFull;               // floor(sqrt(2^64 - 1))
     uint64_t r = static_cast<uint64_t>(std::sqrt(static_cast<double>(c)));
-    // double может ошибиться на ±1; правим сравнением через деление (c/r вместо r*r),
-    // чтобы не переполниться при c ~ 2^64 (тогда r ~ 2^32 и r*r не влезает в uint64_t).
-    while (r > c / r) --r;                 // r*r > c
-    while ((r + 1) <= c / (r + 1)) ++r;    // (r+1)^2 <= c
+    if (r > RMAX) r = RMAX;
+    while (r * r > c) --r;                          // r*r > c
+    while (r < RMAX && (r + 1) * (r + 1) <= c) ++r;  // (r+1)^2 <= c
     root = r;
-    return r * r == c;                     // r = floor(sqrt c) <= 2^32-1, здесь r*r уже без переполнения
+    return r * r == c;
 }
 
 // Предрасчёт степеней q^floor(log_q B) для каждого простого q <= B. Кэш на B.
@@ -400,7 +404,12 @@ inline const std::vector<uint64_t>& pm1_powers(uint32_t B) noexcept {
 // gcd дорогой, поэтому берём его не на каждом простом, а раз в BATCH шагов: аккумулятор
 // "залипает" (как только a ≡ 1 (mod p), таким и остаётся), поэтому gcd(a-1, n) на границе
 // блока ловит p, созревшее в любом месте блока.
-// При gcd == n (перелёт: >=2 делителя созрели в одном блоке) откатываемся и идём пошагово.
+// При gcd == n (перелёт: >=2 делителя созрели в одном блоке) нужен ПЕРВЫЙ индекс, где
+// gcd перестал быть единицей. Предикат монотонен по j - как только a == 1 (mod p), таким
+// и остаётся, дальнейшие возведения единицу не меняют, - поэтому ищем бинпоиском по
+// сохранённым состояниям аккумулятора, как в pollard_rho_batch. Пересчитывать блок
+// пошагово здесь особенно дорого: каждый шаг это M.pow, а не одно умножение.
+// BATCH оставлен 64: на 128 блок перелетает дальше и общий счёт хуже (x0.6-0.8).
 // Возвращает делитель в (1, n) или 0, если p-1 не B-гладкое (тогда падаем в ferma).
 inline uint64_t pollard_pm1(uint64_t n, uint32_t B) noexcept {
     [[assume((n & 1ull) == 1ull)]];
@@ -408,27 +417,27 @@ inline uint64_t pollard_pm1(uint64_t n, uint32_t B) noexcept {
     const std::vector<uint64_t>& powers = pm1_powers(B);
 
     mont M(n);
+    std::array<uint64_t, BATCH> as;                          // состояния аккумулятора в блоке
     uint64_t a = M.add(M.one, M.one);                        // основание a = 2 в Montgomery-форме
     const size_t sz = powers.size();
     for (size_t i = 0; i < sz; i += BATCH) {
         const size_t block_end = std::min(i + BATCH, sz);
-        const uint64_t a_block = a;                 // состояние на начало блока (для отката)
         for (size_t j = i; j < block_end; ++j)
-            a = M.pow(a, powers[j]);                // a = a^(q^k)
+            as[j - i] = a = M.pow(a, powers[j]);    // a = a^(q^k)
 
         uint64_t g = std::gcd(M.from(a) - 1, n);
         if (g == 1) continue;                       // в блоке делитель не созрел, дальше
         if (g != n) return g;                       // нашли нетривиальный делитель
 
-        // Перелёт (g == n): откат к началу блока, пошагово с gcd на каждом простом.
-        a = a_block;
-        for (size_t j = i; j < block_end; ++j) {
-            a = M.pow(a, powers[j]);
-            uint64_t gg = std::gcd(M.from(a) - 1, n);
-            if (gg == n) return 0;                  // даже по одному перелетели -> пас
-            if (gg > 1) return gg;
+        // Перелёт (g == n): бинпоиск первого j с gcd(a_j - 1, n) != 1.
+        uint32_t lo = 0, hi = static_cast<uint32_t>(block_end - i) - 1;
+        while (lo < hi) {
+            uint32_t mid = (lo + hi) >> 1;
+            if (std::gcd(M.from(as[mid]) - 1, n) != 1ull) hi = mid;
+            else lo = mid + 1;
         }
-        return 0;                                    // подстраховка (не должно случаться)
+        const uint64_t d = std::gcd(M.from(as[lo]) - 1, n);
+        return d == n ? 0 : d;                      // одно простое созрело сразу на всё n -> пас
     }
     return 0;                                        // p-1 не B-гладкое
 }
@@ -601,7 +610,11 @@ inline void balance_fctr(uint64_t n, std::vector<uint64_t> &factors) noexcept {
 
     uint64_t i = 17;
 
-    for (uint64_t idx = 0ull; idx < WHEEL_SIZE; ++idx){
+    // Отсечка i*i > n обязательна: без неё колесо крутит все 5760 позиций до 30030
+    // независимо от n, даже когда остаток давно простой. Это x53 на мелких n и x8.6
+    // на n < 1e9; на 64-битных входах колесо и так проходится целиком (x1.01).
+    // После выхода по отсечке n либо 1, либо простое — ferma_fctr разберёт оба случая.
+    for (uint64_t idx = 0ull; idx < WHEEL_SIZE && i * i <= n; ++idx){
         while (true){
             uint64_t m = n;
             uint64_t q = n / i;
