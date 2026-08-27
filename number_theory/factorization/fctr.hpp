@@ -3,6 +3,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <numeric>
 #include <vector>
@@ -137,6 +138,27 @@ struct montgomery {
 
 using mont = montgomery<uint64_t, __uint128_t>;
 using mont32 = montgomery<uint32_t, uint64_t>;
+
+template <class W, class D>
+struct barrett {
+    static constexpr int BITS = static_cast<int>(sizeof(W) * 8);
+
+    W m;     // любой модуль
+    W m_inv; // floor(R / m)
+
+    constexpr explicit barrett(W mod) noexcept : m(mod){
+        m_inv = static_cast<W>(static_cast<D>(1) << BITS / m);
+    }
+
+    // REDC: x < R, возвращает x mod m
+    constexpr W redc(W x) const noexcept {
+        W q = static_cast<W>(((static_cast<D>(x) * m_inv) >> BITS));
+        W r_bar = x - m * q;
+        W r;
+        bool borrow = __builtin_sub_overflow(r_bar, m, &r);
+        return borrow ? r + m : r;
+    }
+};
 
 // Один раунд Миллера-Рабина в Montgomery-форме: false -> a свидетель составности.
 // M построен на нечётном n; mone == (n-1) в форме; вход a в обычном виде.
