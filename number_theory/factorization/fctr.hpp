@@ -381,16 +381,22 @@ inline bool is_square(uint64_t c, uint64_t& root) noexcept {
     return r * r == c;
 }
 
-// Предрасчёт степеней q^floor(log_q B) для каждого простого q <= B. Кэш на B.
+// Предрасчёт наибольшей степени q^e <= 2^B для каждого простого q <= 2^B. Кэш на B.
+// Показатель считается циклом, а не через log2: floor(B / floor(log2 q)) ЗАВЫШАЕТ его,
+// потому что floor(log2 q) занижает log2 q (для q = 3 это 1 вместо 1.585, и при B = 10
+// выходит 3^10 = 59049 вместо 3^6 = 729 — уже за пределом 2^10, а при B >= 41 ещё и за
+// пределом uint64). Делений тут бояться нечего: расчёт одноразовый и кэшируется.
 inline const std::vector<uint64_t>& pm1_powers(uint32_t B) noexcept {
+    [[assume(B >= 2 && B < 32)]];
     static uint32_t cached_B = 0;
     static std::vector<uint64_t> powers;
     if (B != cached_B) {
+        const uint64_t limit = 1ull << B;
         powers.clear();
-        powers.reserve(B / std::log(B));
-        for (const uint32_t &q : sieve(B)) {
-            uint64_t e = q;
-            while (e * q <= B) e *= q;           // наибольшая степень q, не превосходящая B
+        powers.reserve(static_cast<size_t>(1.5 * static_cast<double>(limit) / B));
+        for (const uint32_t &p : sieve(static_cast<uint32_t>(limit))) {
+            uint64_t e = p;
+            while (e <= limit / p) e *= p;      // наибольшая степень p, не превосходящая 2^B
             powers.push_back(e);
         }
         cached_B = B;
