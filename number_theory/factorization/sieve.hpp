@@ -92,3 +92,66 @@ inline std::vector<uint32_t> firstNprimes(uint32_t n) noexcept {
 
     return primes;
 }
+
+inline std::vector<uint32_t> sieve_lp(uint32_t n) noexcept {
+    if (n < 2) return {};
+    
+    std::vector<uint32_t> lp(n - 1, 0u), primes;
+    primes.reserve(n / log(n));
+
+    for (uint32_t i = 2; i <= n; ++i){
+        if (lp[i - 2] == 0){
+            lp[i - 2] = i;
+            primes.push_back(i);
+        }
+
+        // uint32_t max_p = std::min(n / i, lp[i - 2]);
+        for (const uint32_t& p : primes){
+            if (p > lp[i - 2] || static_cast<uint64_t>(p) * i > static_cast<uint64_t>(n)) break;
+            lp[i * p - 2] = p;
+        }
+    }
+
+    return lp;
+}
+
+inline std::vector<uint32_t> EulerFunc(uint32_t n, const std::vector<uint32_t>& lp) noexcept {
+    if (n == 0u) return {};
+    if (n == 1u) return {0u};
+
+    std::vector<uint32_t> EulerFunc = std::views::iota(1u, n + 1u) | std::ranges::to<std::vector>();
+    EulerFunc[0] = 0u;
+
+    for (auto& phi : EulerFunc){
+        uint32_t x = phi;
+        while (x > 1u){
+            uint32_t p = lp[x - 2];
+            while (x % p == 0) x /= p;
+            phi = phi / p * (p - 1);
+        }
+    }
+
+    return EulerFunc;
+}
+
+inline std::vector<int32_t> MobiusFunc(uint32_t n, const std::vector<uint32_t>& lp) noexcept {
+    if (n == 0u) return {};
+    if (n == 1u) return {1u};
+
+    std::vector<int32_t> MobiusFunc(n, 1);
+
+    for (uint32_t x = 2u; x <= n; ++x){
+        uint32_t mu = x;
+        while (mu > 1u){
+            uint32_t p = lp[mu - 2];
+            mu /= p;
+            if (mu % p == 0) {
+                MobiusFunc[x - 1] = 0;
+                break;
+            }
+            MobiusFunc[x - 1] ^= 0xfffffffe;
+        }
+    }
+
+    return MobiusFunc;
+}
