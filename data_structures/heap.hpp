@@ -1,9 +1,7 @@
 #pragma once
-// #include <vector>
-// #include <algorithm>
-#include <span>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
+#include <span>
 
 inline void sift_down(uint64_t* a, size_t n, size_t i) noexcept {
     const uint64_t x = a[i];

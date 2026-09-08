@@ -15,7 +15,7 @@
 #include "../dft.hpp"
 
 // Максимальная частота эпицикла
-constexpr int M = 400;
+constexpr int M = 1000;
 constexpr size_t NUM_EPICYCLES = 2 * M;
 constexpr size_t AMORTIZATION_COUNT = 8;
 constexpr double AMORTIZATION_DEEP_INV = 1.0 / static_cast<double>(1ULL << AMORTIZATION_COUNT);
