@@ -11,7 +11,6 @@
 /*.cpp
 compile_flags.txt
 number_theory/factorization/primes2^30.txt
-number_theory/factorization/primes_gen.cpp
 number_theory/factorization/pollard_rho.hpp
 
 matan/dft/fourierPortrait/*.png

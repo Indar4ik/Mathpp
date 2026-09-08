@@ -97,8 +97,7 @@ struct Plan {
 // Итеративный Кули-Тьюки O(n log n). arr.size() должен совпадать с plan.n.
 inline void fft(std::vector<cd> &arr, const Plan &plan) noexcept {
     const size_t n = plan.n;
-    if (n <= 1)
-        return;
+    if (n <= 1) return;
     [[assume((n & (n - 1)) == 0)]];
     [[assume(n >= 2)]];
 
@@ -154,8 +153,7 @@ inline void fft(std::vector<cd> &arr, const Plan &plan) noexcept {
 // plan.n.
 inline void ifft(std::vector<cd> &arr, const Plan &plan) noexcept {
     const size_t n = plan.n;
-    if (n <= 1)
-        return;
+    if (n <= 1) return;
     [[assume((n & (n - 1)) == 0)]];
     [[assume(n >= 2)]];
 
@@ -229,21 +227,21 @@ inline void fft_mt(std::vector<cd> &arr, const Plan &plan) noexcept {
     const size_t *__restrict rev = plan.revers_idx.data();
     const cd *__restrict tw = plan.twiddles.data();
 
-#ifdef _OPENMP
-    const size_t nthreads = static_cast<size_t>(omp_get_max_threads());
-#else
-    const size_t nthreads = 1;
-#endif
+    #ifdef _OPENMP
+        const size_t nthreads = static_cast<size_t>(omp_get_max_threads());
+    #else
+        const size_t nthreads = 1;
+    #endif
 
-#pragma omp parallel
+    #pragma omp parallel
     {
-// Бит-реверсная перестановка: пары {i, rev[i]} не пересекаются -> без гонок.
+        // Бит-реверсная перестановка: пары {i, rev[i]} не пересекаются -> без гонок.
         #pragma omp for schedule(static)
         for (size_t i = 0; i < n; ++i)
             if (i < rev[i])
                 std::swap(a[i], a[rev[i]]);
 
-// Вырожденный случай - бабочки длины 2
+        // Вырожденный случай - бабочки длины 2
         #pragma omp for schedule(static)
         for (size_t i = 0; i < n; i += 2) {
             cd u = a[i];
@@ -252,7 +250,7 @@ inline void fft_mt(std::vector<cd> &arr, const Plan &plan) noexcept {
             a[i + 1] = u - v;
         }
 
-// Вырожденный случай - бабочки длины 4
+        // Вырожденный случай - бабочки длины 4
         #pragma omp for schedule(static)
         for (size_t i = 0; i < n; i += 4) {
             cd u1 = a[i];
@@ -411,8 +409,7 @@ struct NTTPlan {
             tw[i] = wk;
             wk = M.mul(wk, w);
         }
-        for (size_t i = K; i < H; ++i)
-            tw[i] = M.mul(tw[i - K], wk); // здесь wk == w^K
+        for (size_t i = K; i < H; ++i) tw[i] = M.mul(tw[i - K], wk); // здесь wk == w^K
 
         // w^{-i} = w^{n-i} = w^{n/2} * w^{n/2-i} = -w^{n/2-i}, так как w^{n/2} =
         // -1. Обратная таблица выходит одним вычитанием на элемент, без второго
@@ -420,8 +417,7 @@ struct NTTPlan {
         // не бывает.
         uint64_t *__restrict twi = twiddles_inv.data();
         twi[0] = M.one;
-        for (size_t i = 1; i < H; ++i)
-            twi[i] = mod - tw[H - i];
+        for (size_t i = 1; i < H; ++i) twi[i] = mod - tw[H - i];
 
         n_inv = M.pow(M.to(static_cast<uint64_t>(n)), mod - 2ull); // n^{-1} в форме
     }
@@ -671,8 +667,7 @@ inline void intt(std::vector<uint64_t> &arr, uint64_t mod = NTT_P62) noexcept {
 }
 
 inline std::vector<cd> polynom_mul(std::vector<cd> a, std::vector<cd> b) {
-    if (a.empty() || b.empty())
-        return {};
+    if (a.empty() || b.empty()) return {};
 
     const size_t k = a.size() + b.size() - 1ull;
     const size_t n = std::bit_ceil(k);
@@ -692,8 +687,7 @@ inline std::vector<cd> polynom_mul(std::vector<cd> a, std::vector<cd> b) {
 }
 
 inline std::vector<double> polynom_mul(std::vector<double> a, std::vector<double> b) {
-    if (a.empty() || b.empty())
-        return {};
+    if (a.empty() || b.empty()) return {};
 
     const size_t n = a.size(), m = b.size();
     const size_t k = n + m - 1ull;
@@ -723,8 +717,7 @@ inline std::vector<double> polynom_mul(std::vector<double> a, std::vector<double
 // значит L*C^2 < p), иначе результат завернётся по модулю и точность будет
 // потеряна молча.
 inline std::vector<uint64_t> polynom_mul(std::vector<uint64_t> a, std::vector<uint64_t> b, uint64_t mod = NTT_P62) {
-    if (a.empty() || b.empty())
-        return {};
+    if (a.empty() || b.empty()) return {};
 
     const size_t k = a.size() + b.size() - 1ull;
     const size_t n = std::max<size_t>(2ull, std::bit_ceil(k));
