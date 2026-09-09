@@ -3,12 +3,14 @@
 #include <cstdint>
 #include <type_traits>
 
+namespace gf2p {
+
 [[nodiscard]] inline constexpr uint64_t get_primitive_poly(size_t bytes) noexcept {
     switch (bytes) {
-        case 1: return 0x1d;   // GF(2^8)
-        case 2: return 0x2d;   // GF(2^16)
-        case 4: return 0xc5;   // GF(2^32)
-        case 8: return 0x1b;   // GF(2^64)
+        case 1:  return 0x1d; // GF(2^8)
+        case 2:  return 0x2d; // GF(2^16)
+        case 4:  return 0xc5; // GF(2^32)
+        case 8:  return 0x1b; // GF(2^64)
         default: return 0x00;
     }
 }
@@ -83,3 +85,5 @@ using gf2p32 = gf2p<uint32_t>;
 using gf2p64 = gf2p<uint64_t>;
 
 // static_assert(std::is_trivially_copyable_v<gf2p<uint32_t>>, "Must be trivially copyable");
+
+} // namespace gf2p
