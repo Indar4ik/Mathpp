@@ -19,6 +19,8 @@ matan/dft/fourierPortrait/points.txt
 matan/dft/dft_examples.hpp
 matan/dft/dft6.hpp
 
+data_structures/mul_lut_gen.cpp
+
 build/
 bench/
 out/

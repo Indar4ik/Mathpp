@@ -134,10 +134,25 @@ struct montgomery {
         }
         return r;
     }
+
+    // Контракт: 4m < R
+    constexpr W pow_lazy(W a, W e) const noexcept {
+        W r = one;
+        while (e) {
+            if (e & W(1)) r = mul_lazy(r, a);
+            a = mul_lazy(a, a);
+            e >>= 1;
+        }
+        return r;
+    }
 };
 
 using mont = montgomery<uint64_t, __uint128_t>;
 using mont32 = montgomery<uint32_t, uint64_t>;
+
+// Общий потолок ленивой арифметики: держим величины в [0, 2m), тогда произведение
+// двух таких меньше 4m^2, а контракт redc_lazy требует вход < mR — отсюда 4m <= R.
+inline constexpr uint64_t LAZY_MAX = ~0ull / 4;
 
 template <class W, class D>
 struct barrett {
@@ -172,6 +187,18 @@ inline bool mr_witness(uint64_t a, const mont& M, uint64_t minus_one, uint64_t d
     return false;
 }
 
+
+inline bool mr_witness_lazy(uint64_t a, const mont& M, uint64_t minus_one, uint64_t d, int s) noexcept {
+    const uint64_t minus_one_lazy = minus_one + M.m;
+    uint64_t x = M.pow_lazy(M.to(a), d);                    // a^d в форме
+    if (x == M.one || x == M.one + M.m || x == minus_one || x == minus_one_lazy) return true;      // a^d == 1 или -1
+    for (int r = 1; r < s; ++r) {
+        x = M.mul_lazy(x, x);
+        if (x == minus_one || x == minus_one_lazy) return true;  // встретили -1 -> раунд пройден
+    }
+    return false;
+}
+
 // Детерминированный тест простоты для всего диапазона uint64_t.
 inline bool is_prime(uint64_t n) noexcept {
     if (n < 2) return false;
@@ -195,11 +222,23 @@ inline bool is_prime(uint64_t n) noexcept {
         for (uint64_t a : bases) if (!mr_witness(a, M, minus_one, d, s)) return false;
         return true;
     };
+    const auto all_pass_lazy = [&](std::initializer_list<uint64_t> bases) noexcept {
+        for (uint64_t a : bases) if (!mr_witness_lazy(a, M, minus_one, d, s)) return false;
+        return true;
+    };
     // Набор свидетелей по величине n: полный семёрочный нужен только выше 3.2e9,
     // ниже хватает коротких наборов Яшке. Это x2.3 на простых до 2e7 и x1.4 на
     // диапазоне 1e9..3e9; на 64-битных входах ярусы не срабатывают и не мешают.
+    // Два младших яруса остаются СТРОГИМИ намеренно: там показатель d короткий, раунд
+    // и так заканчивается за десяток умножений, а ленивый вариант на таких n стабильно
+    // теряет ~3.5% (замерено раздельными бинарями, не раскладка кода). С третьего яруса
+    // ленивый выигрывает: x1.03 на 2.5e7..3.2e9 и x1.06-1.07 на простых ~2^61.
     if (n < 1373653ull)    return all_pass({2, 3});
     if (n < 25326001ull)   return all_pass({2, 3, 5});
+    if (n <= LAZY_MAX) {
+        if (n < 3215031751ull) return all_pass_lazy({2, 3, 5, 7});
+        return all_pass_lazy({2, 325, 9375, 28178, 450775, 9780504, 1795265022});
+    }
     if (n < 3215031751ull) return all_pass({2, 3, 5, 7});
     return all_pass({2, 325, 9375, 28178, 450775, 9780504, 1795265022});
 }
@@ -506,8 +545,8 @@ inline void trial_divide_all(uint64_t n, std::vector<uint64_t> &factors) noexcep
 // устойчивость (k^2*m^2 + (R-1)m)/R + c <= k*m даёт m <= R(k-1)/k^2. С формой Монтгомери
 // вместо c стояло бы m, и было бы R(k-2)/k^2 - тогда оба условия сходятся в k = 3 (R/9).
 // С литеральной добавкой связывает контракт, минимальное допустимое k равно 2, отсюда R/4:
-// ленивый путь покрывает 25% диапазона uint64 вместо 11%.
-inline constexpr uint64_t RHO_LAZY_MAX = ~0ull / 4;
+// ленивый путь покрывает 25% диапазона uint64 вместо 11%. Совпадает с общим LAZY_MAX.
+inline constexpr uint64_t RHO_LAZY_MAX = LAZY_MAX;
 
 // Один проход Pollard-ро (Брент) по полиному x^2 + c с батчингом gcd: произведение
 // разностей копится по модулю n, gcd берётся раз в BATCH шагов, при перелёте

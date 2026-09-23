@@ -1,6 +1,8 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <immintrin.h>
 #include <type_traits>
 
 namespace gf2p {
@@ -71,13 +73,12 @@ struct gf2p {
     [[nodiscard]] constexpr bool operator==(gf2p other) const noexcept { return x == other.x; }
     [[nodiscard]] constexpr bool operator!=(gf2p other) const noexcept { return x != other.x; }
 
-    [[nodiscard]] inline constexpr gf2p mulx(gf2p a) const noexcept {
-        T op_a = a.x;
-        T mask = -(op_a >> (BITS - 1));
-
-        return gf2p((op_a << 1) ^ (POLY & mask));
-    }
 };
+
+template <typename T>
+[[nodiscard]] inline constexpr gf2p<T> mulx(gf2p<T> a) noexcept {
+    return gf2p<T>((a.x << 1) ^ (a.POLY & (-(a.x >> (a.BITS - 1)))));
+}
 
 using gf2p8 = gf2p<uint8_t>;
 using gf2p16 = gf2p<uint16_t>;
