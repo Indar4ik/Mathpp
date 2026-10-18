@@ -2,8 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <vector>
 #include <ranges>
+#include <vector>
 
 // idx: value
 // 0: 4
@@ -66,7 +66,7 @@ inline std::vector<uint32_t> firstNprimes(uint32_t n) noexcept {
     if (n == 3) return {2, 3, 5};
 
     size_t k = 3;
-    uint32_t limit = (n < 6) ? 13 : (uint32_t)(n * (log(n) + log(log(n))));
+    uint32_t limit = (n < 6) ? 13 : static_cast<uint32_t>(n * (log(n) + log(log(n))));
     const uint32_t max_idx = x_to_idx(limit);
 
     std::vector<uint32_t> lp(max_idx + 1, 0), primes(n);

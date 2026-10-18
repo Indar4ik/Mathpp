@@ -17,6 +17,21 @@ namespace gf2p {
     }
 }
 
+struct tables8 {
+    std::array<uint16_t, 256> log{510};
+    std::array<uint8_t, 1021> exp{};
+
+    constexpr tables8() {
+        uint8_t v = 1;
+        for (unsigned i = 0; i < 255; ++i) {
+            exp[i] = exp[i + 255] = v;
+            log[v] = i;
+            v = (v << 1) ^ (static_cast<uint8_t>(get_primitive_poly(1)) & -(v >> 7));
+        }
+    }
+};
+// inline constexpr tables8 T8{};
+
 template <typename T>
 struct gf2p {
     static_assert(std::is_unsigned_v<T>, "T must be an unsigned integer type");
