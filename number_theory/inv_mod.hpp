@@ -3,19 +3,12 @@
 #include <cstdint>
 #include <immintrin.h>
 
-// Вспомогательная функция: x^{-1} mod 2^64 (Метод Ньютона от f(a) = 1/a - x)
-inline uint64_t inv_mod_2_64(uint64_t x) noexcept {
-    uint64_t y = x;
-    y *= 2 - x * y;
-    y *= 2 - x * y;
-    y *= 2 - x * y;
-    y *= 2 - x * y;
-    y *= 2 - x * y;
-    return y;
-}
+#include "base.hpp"
+
+namespace hpc {
 
 // ax≡1 (mod m)
-// m - нечётное!
+// m - нечётное
 inline uint64_t inv_mod_odd(uint64_t a, uint64_t m) noexcept {
     [[assume((m & 1ull) == 1ull)]];
     if (m <= 1) return 0;
@@ -24,8 +17,7 @@ inline uint64_t inv_mod_odd(uint64_t a, uint64_t m) noexcept {
     if (u == 0) return 0; // Если a кратно m, обратного не существует
 
     // 1. Вычисляем -m^{-1} mod 2^64 с помощью метода Ньютона-Рафсона.
-    // Это полностью разворачивается компилятором (без циклов, только imul).
-    uint64_t neg_inv_m = -inv_mod_2_64(m);
+    uint64_t neg_inv_m = -inv_mod2(m);
 
     uint64_t v = m;
     uint64_t x1 = 1, x2 = 0;
@@ -36,7 +28,7 @@ inline uint64_t inv_mod_odd(uint64_t a, uint64_t m) noexcept {
         u >>= s;
         // Трюк Монтгомери: вычисляем сдвиг на s бит без цикла
         uint64_t q = _bzhi_u64(x1 * neg_inv_m, s); 
-        x1 = (uint64_t)(((unsigned __int128)x1 + (unsigned __int128)q * m) >> s);
+        x1 = static_cast<uint64_t>((static_cast<__uint128_t>(x1) + static_cast<__uint128_t>(q) * m) >> s);
     }
 
     // 3. Основной цикл: u и v всегда нечетные на входе в итерацию
@@ -64,7 +56,7 @@ inline uint64_t inv_mod_odd(uint64_t a, uint64_t m) noexcept {
         uint64_t q = _bzhi_u64(x_diff * neg_inv_m, s);
         
         // icpx транслирует это в пару инструкций (mul, add, adc, shrd). Это мега-быстро.
-        uint64_t x_shifted = (uint64_t)(((unsigned __int128)x_diff + (unsigned __int128)q * m) >> s);
+        uint64_t x_shifted = static_cast<uint64_t>((static_cast<__uint128_t>(x_diff) + static_cast<__uint128_t>(q) * m) >> s);
 
         // 5. Обновляем u, v, x1, x2 безусловно через CMOV
         if (u_gt_v) {
@@ -86,9 +78,7 @@ inline uint64_t inv_mod(uint64_t a, uint64_t m) noexcept {
     uint64_t k = _tzcnt_u64(m);
     
     // 1. Если m нечетное - сразу вызываем нашу функцию
-    if (k == 0) {
-        return inv_mod_odd(a, m);
-    }
+    if (k == 0) return inv_mod_odd(a, m);
 
     // 2. Если m четное, обратное существует ТОЛЬКО для нечетных a
     if ((a & 1) == 0) return 0;
@@ -96,13 +86,11 @@ inline uint64_t inv_mod(uint64_t a, uint64_t m) noexcept {
     uint64_t m_odd = m >> k;
 
     // 3. Считаем a^{-1} mod 2^k
-    uint64_t inv_a = inv_mod_2_64(a);
+    uint64_t inv_a = inv_mod2(a);
     uint64_t c2 = _bzhi_u64(inv_a, k); // обрезаем до k бит
 
     // Краевой случай: m было степенью двойки
-    if (m_odd == 1) {
-        return c2;
-    }
+    if (m_odd == 1) return c2;
 
     // 4. Считаем a^{-1} mod m_odd
     uint64_t c1 = inv_mod_odd(a, m_odd);
@@ -112,7 +100,7 @@ inline uint64_t inv_mod(uint64_t a, uint64_t m) noexcept {
     // Ищем X = c1 + m_odd * K, такой что X ≡ c2 (mod 2^k)
     // Математически: K ≡ (c2 - c1) * m_odd^{-1} (mod 2^k)
     
-    uint64_t inv_m_odd = inv_mod_2_64(m_odd); 
+    uint64_t inv_m_odd = inv_mod2(m_odd); 
     
     // _bzhi_u64 выполняет роль быстрого (mod 2^k)
     // Беззнаковое переполнение (c2 - c1) абсолютно легально и математически корректно
@@ -120,3 +108,5 @@ inline uint64_t inv_mod(uint64_t a, uint64_t m) noexcept {
 
     return c1 + m_odd * K;
 }
+
+} // namespace hpc

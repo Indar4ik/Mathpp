@@ -10,7 +10,7 @@
 *.icpx*
 /*.cpp
 compile_flags.txt
-number_theory/factorization/pollard_rho.hpp
+number_theory/pollard_rho.hpp
 
 matan/dft/fourierPortrait/*.png
 matan/dft/fourierPortrait/points

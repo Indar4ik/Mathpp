@@ -1,250 +1,19 @@
 #pragma once
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <numeric>
 #include <vector>
+
+#include "mr.hpp"
 #include "sieve.hpp"
 
-// x^{-1} mod 2^W для нечётного x, метод Ньютона.
-// Старт y = x точен на 3 бита (x*x == 1 mod 8 при нечётном x), каждый шаг
-// удваивает: 3 -> 6 -> 12 -> 24 -> 48 -> 96. Значит 4 шага хватает для 32 бит,
-// 5 для 64. Проверено исчерпывающим перебором всех нечётных 32-битных x.
-template <class W>
-constexpr W inv_mod2(W x) noexcept {
-    W y = x;
-    for (int i = 0; i < (sizeof(W) == 8 ? 5 : 4); ++i) y *= W(2) - x * y;
-    return y;
-}
-
-inline constexpr uint64_t inv_mod2_64(uint64_t x) noexcept { return inv_mod2<uint64_t>(x); }
-inline constexpr uint32_t inv_mod2_32(uint32_t x) noexcept { return inv_mod2<uint32_t>(x); }
-
-inline constexpr uint64_t mulmod(uint64_t a, uint64_t b, uint64_t m) noexcept {
-    [[assume((m & 1ull) == 1ull)]];
-    return static_cast<__uint128_t>(a) * b % m;
-}
-
-inline constexpr uint64_t powmod(uint64_t a, uint64_t e, uint64_t m) noexcept {
-    [[assume((m & 1ull) == 1ull)]];
-    uint64_t r = 1ull;
-    while (e){
-        if (e & 1ull) r = mulmod(a, r, m);
-        a = mulmod(a, a, m);
-        e >>= 1;
-    }
-    return r;
-}
-
-// Montgomery-арифметика по нечётному модулю m. Параметры шаблона - машинное
-// слово W (оно же R = 2^bits) и двойное слово D для произведений; вся структура
-// 32- и 64-битной версий совпадает с точностью до этих двух типов.
-// Все значения внутри хранятся в форме a_bar = a * R mod m; константы считаются
-// раз на m. Всё constexpr: при фиксированном модуле контекст строится компилятором.
-template <class W, class D>
-struct montgomery {
-    static constexpr int BITS = static_cast<int>(sizeof(W) * 8);
-
-    W m;      // модуль (нечётный)
-    W m_inv;  // m^{-1} mod R
-    W r2;     // R^2 mod m   (для перевода в форму)
-    W one;    // R   mod m   (Montgomery-форма единицы)
-
-    constexpr explicit montgomery(W mod) noexcept : m(mod) {
-        [[assume((m & W(1)) == W(1))]];
-        m_inv = inv_mod2<W>(m);                        // m_inv * m == 1 (mod R)
-        one = static_cast<W>(-m) % m;                  // R mod m = (R - m mod m) = (-m) mod m
-        r2 = static_cast<W>(static_cast<D>(one) * one % m);  // (R mod m)^2 mod m = R^2 mod m
-    }
-
-    // REDC: по x < m*R возвращает x * R^{-1} mod m в [0, m).
-    // Вычитательная форма: t = lo(x) * m^{-1}, тогда t*m == x (mod R), то есть
-    // младшие лимбы x и t*m совпадают ТОЧНО -> при вычитании они гасятся без заёма,
-    // а частное (x - t*m)/R равно разности старших лимбов и лежит в (-m, m).
-    // Переполнения двойного слова здесь не бывает по построению (в отличие от формы
-    // x + t*m, где при m ~ R приходится отдельно ловить перенос), поэтому хвост -
-    // ровно sub + cmov + add вместо add/adc + cmp/sbb + двух cmov.
-    constexpr W redc(D x) const noexcept {
-        W t = static_cast<W>(x) * m_inv;
-        W th = static_cast<W>((static_cast<D>(t) * m) >> BITS);
-        W r;
-        bool borrow = __builtin_sub_overflow(static_cast<W>(x >> BITS), th, &r);
-        return borrow ? static_cast<W>(r + m) : r;  // ушли ниже нуля -> возвращаем в [0, m)
-    }
-
-    // «Ленивый» REDC: без финального условного вычитания, результат в [0, 2m).
-    // Здесь нужна именно АДДИТИВНАЯ форма (x + t*m): её частное неотрицательно по
-    // построению, тогда как вычитательная даёт результат в (-m, m) и без коррекции
-    // не обходится. Отрицательный обратный считаем на месте - это один neg, и он
-    // выносится из цикла как инвариант.
-    // Контракт: x < m*R, результат в [0, 2m); требуется m < R/2 (иначе 2m не влезет
-    // в слово, а сумма x + t*m - в двойное).
-    constexpr W redc_lazy(D x) const noexcept {
-        W t = static_cast<W>(x) * static_cast<W>(W(0) - m_inv);
-        return static_cast<W>((x + static_cast<D>(t) * m) >> BITS);
-    }
-
-    constexpr W mul(W a, W b) const noexcept { return redc(static_cast<D>(a) * b); }
-    constexpr W mul_lazy(W a, W b) const noexcept { return redc_lazy(static_cast<D>(a) * b); }
-    constexpr W to(W a) const noexcept { return mul(a, r2); }   // a -> a*R mod m
-    constexpr W from(W a) const noexcept { return redc(a); }    // a*R -> a mod m
-
-    // Предвычисление для умножения Шоупа на ФИКСИРОВАННЫЙ множитель w: w' = floor(w*R/m).
-    // Деления не нужно: пусть r = w*R mod m (это ровно Montgomery-форма w). Тогда
-    // w'*m = w*R - r, и по модулю R получаем w' == -r * m^{-1}. Так как w < m,
-    // частное w' < R, поэтому сравнение по модулю задаёт его точно.
-    // Вход - w в Montgomery-форме (то есть уже r), выход - w' для shoup_mul_lazy.
-    constexpr W shoup(W w_mont) const noexcept { return static_cast<W>(W(0) - w_mont) * m_inv; }
-
-    // Умножение Шоупа: b * w mod m, где w - ОБЫЧНЫЙ вычет, w_sh = shoup(to(w)).
-    // Умножений столько же, сколько у Montgomery (три), но цепочка зависимостей
-    // короче: mulhi и mullo стартуют от b одновременно. Результат в [0, 2m).
-    // Контракт: w < m, m < R/2, b - любое слово.
-    static constexpr W shoup_mul_lazy(W b, W w, W w_sh, W m) noexcept {
-        W q = static_cast<W>((static_cast<D>(w_sh) * b) >> BITS);
-        return static_cast<W>(w * b - q * m);
-    }
-
-    // Сложение и вычитание по модулю: входы в [0, m), выход в [0, m).
-    // Montgomery-форма линейна, поэтому одни и те же add/sub годятся и для обычных
-    // вычетов, и для значений в форме.
-    constexpr W add(W a, W b) const noexcept {
-        // a + b - m считаем как a - (m - b): так не переполняем слово даже при m ~ R.
-        W d;
-        bool borrow = __builtin_sub_overflow(a, static_cast<W>(m - b), &d);
-        return borrow ? static_cast<W>(d + m) : d;  // a + b < m -> вернуть a + b
-    }
-
-    constexpr W sub(W a, W b) const noexcept {
-        W d;
-        bool borrow = __builtin_sub_overflow(a, b, &d);
-        return borrow ? static_cast<W>(d + m) : d;
-    }
-
-    // a^e mod m, вход/выход в Montgomery-форме.
-    constexpr W pow(W a, W e) const noexcept {
-        W r = one;
-        while (e) {
-            if (e & W(1)) r = mul(r, a);
-            a = mul(a, a);
-            e >>= 1;
-        }
-        return r;
-    }
-
-    // Контракт: 4m < R
-    constexpr W pow_lazy(W a, W e) const noexcept {
-        W r = one;
-        while (e) {
-            if (e & W(1)) r = mul_lazy(r, a);
-            a = mul_lazy(a, a);
-            e >>= 1;
-        }
-        return r;
-    }
-};
-
-using mont = montgomery<uint64_t, __uint128_t>;
-using mont32 = montgomery<uint32_t, uint64_t>;
-
-// Общий потолок ленивой арифметики: держим величины в [0, 2m), тогда произведение
-// двух таких меньше 4m^2, а контракт redc_lazy требует вход < mR — отсюда 4m <= R.
-inline constexpr uint64_t LAZY_MAX = ~0ull / 4;
-
-template <class W, class D>
-struct barrett {
-    static constexpr int BITS = static_cast<int>(sizeof(W) * 8);
-
-    W m;     // любой модуль
-    W m_inv; // floor(R / m)
-
-    constexpr explicit barrett(W mod) noexcept : m(mod){
-        m_inv = static_cast<W>(static_cast<D>(1) << BITS / m);
-    }
-
-    // REDC: x < R, возвращает x mod m
-    constexpr W redc(W x) const noexcept {
-        W q = static_cast<W>(((static_cast<D>(x) * m_inv) >> BITS));
-        W r_bar = x - m * q;
-        W r;
-        bool borrow = __builtin_sub_overflow(r_bar, m, &r);
-        return borrow ? r + m : r;
-    }
-};
-
-// Один раунд Миллера-Рабина в Montgomery-форме: false -> a свидетель составности.
-// M построен на нечётном n; mone == (n-1) в форме; вход a в обычном виде.
-inline bool mr_witness(uint64_t a, const mont& M, uint64_t minus_one, uint64_t d, int s) noexcept {
-    uint64_t x = M.pow(M.to(a), d);                // a^d в форме
-    if (x == M.one || x == minus_one) return true;      // a^d == 1 или -1
-    for (int r = 1; r < s; ++r) {
-        x = M.mul(x, x);
-        if (x == minus_one) return true;                // встретили -1 -> раунд пройден
-    }
-    return false;
-}
-
-
-inline bool mr_witness_lazy(uint64_t a, const mont& M, uint64_t minus_one, uint64_t d, int s) noexcept {
-    const uint64_t minus_one_lazy = minus_one + M.m;
-    uint64_t x = M.pow_lazy(M.to(a), d);                    // a^d в форме
-    if (x == M.one || x == M.one + M.m || x == minus_one || x == minus_one_lazy) return true;      // a^d == 1 или -1
-    for (int r = 1; r < s; ++r) {
-        x = M.mul_lazy(x, x);
-        if (x == minus_one || x == minus_one_lazy) return true;  // встретили -1 -> раунд пройден
-    }
-    return false;
-}
-
-// Детерминированный тест простоты для всего диапазона uint64_t.
-inline bool is_prime(uint64_t n) noexcept {
-    if (n < 2) return false;
-    // Снимаем все делители свидетелей для корректности (иначе n | a -> a^d == 0 mod n)
-    // Плюс засекает ~77% составных без умножений
-    #pragma clang loop unroll(full)
-    for (uint64_t p : {2ull, 3ull, 5ull, 7ull, 13ull, 19ull, 73ull, 193ull, 407521ull, 299210837ull}) {
-        if (n == p) return true;
-        if (n % p == 0) return false;
-    }
-
-    // n нечётное и не делится на малые простые: раскладываем n - 1 = d * 2^s один раз
-    uint64_t d = n - 1ull;
-    int s = std::countr_zero(d);
-    d >>= s;
-    // Montgomery-контекст и -1 в форме считаем один раз на n.
-    mont M(n);
-    uint64_t minus_one = n - M.one;                     // (n-1) в Montgomery-форме = -1
-
-    const auto all_pass = [&](std::initializer_list<uint64_t> bases) noexcept {
-        for (uint64_t a : bases) if (!mr_witness(a, M, minus_one, d, s)) return false;
-        return true;
-    };
-    const auto all_pass_lazy = [&](std::initializer_list<uint64_t> bases) noexcept {
-        for (uint64_t a : bases) if (!mr_witness_lazy(a, M, minus_one, d, s)) return false;
-        return true;
-    };
-    // Набор свидетелей по величине n: полный семёрочный нужен только выше 3.2e9,
-    // ниже хватает коротких наборов Яшке. Это x2.3 на простых до 2e7 и x1.4 на
-    // диапазоне 1e9..3e9; на 64-битных входах ярусы не срабатывают и не мешают.
-    // Два младших яруса остаются СТРОГИМИ намеренно: там показатель d короткий, раунд
-    // и так заканчивается за десяток умножений, а ленивый вариант на таких n стабильно
-    // теряет ~3.5% (замерено раздельными бинарями, не раскладка кода). С третьего яруса
-    // ленивый выигрывает: x1.03 на 2.5e7..3.2e9 и x1.06-1.07 на простых ~2^61.
-    if (n < 1373653ull)    return all_pass({2, 3});
-    if (n < 25326001ull)   return all_pass({2, 3, 5});
-    if (n <= LAZY_MAX) {
-        if (n < 3215031751ull) return all_pass_lazy({2, 3, 5, 7});
-        return all_pass_lazy({2, 325, 9375, 28178, 450775, 9780504, 1795265022});
-    }
-    if (n < 3215031751ull) return all_pass({2, 3, 5, 7});
-    return all_pass({2, 325, 9375, 28178, 450775, 9780504, 1795265022});
-}
+namespace hpc {
 
 // Колесо mod 30030 (2*3*5*7*11*13): инкременты для перебора делителей, старт с 17.
-inline constexpr uint64_t WHEEL[] =
+inline constexpr uint32_t WHEEL[] =
     {2, 4, 6, 2, 6, 4, 2, 4, 6, 6, 2, 6, 4, 2, 6, 4, 6, 8, 4, 2, 4, 2, 4, 14, 4, 6, 2, 10, 2, 6, 6, 4, 6, 6, 2, 10, 2, 4, 2, 
     12, 12, 4, 2, 4, 6, 2, 10, 6, 6, 6, 2, 6, 4, 2, 6, 4, 14, 4, 2, 4, 6, 8, 6, 10, 2, 4, 6, 2, 6, 6, 6, 4, 6, 2, 6, 4, 8, 
     10, 2, 10, 2, 4, 2, 4, 6, 8, 4, 2, 4, 12, 8, 4, 2, 6, 4, 6, 12, 2, 4, 2, 12, 6, 4, 6, 6, 6, 2, 6, 10, 2, 4, 6, 2, 6, 6, 
@@ -402,8 +171,8 @@ inline void sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept {
     while (n % 11 == 0) { factors.push_back(11); n /= 11; }
     while (n % 13 == 0) { factors.push_back(13); n /= 13; }
 
-    uint64_t i = 17;
-    uint64_t idx = 0ull;
+    uint32_t i = 17;
+    uint32_t idx = 0;
 
     while (i * i <= n){
         while (true){
@@ -415,13 +184,13 @@ inline void sqrt_fctr(uint64_t n, std::vector<uint64_t>& factors) noexcept {
             factors.push_back(i);
         }
         i += WHEEL[idx];
-        if (++idx == WHEEL_SIZE) idx = 0ull;
+        if (++idx == WHEEL_SIZE) idx = 0;
     }
     if (n > 1) factors.push_back(n);
 }
 
 constexpr uint64_t SQ_MASK = []{
-    uint64_t m = 0ull;
+    uint64_t m = 0;
     for (uint64_t i = 0; i < 64; ++i) m |= 1ull << ((i * i) & 63ull);
     return m;
 }();
@@ -489,8 +258,7 @@ inline uint64_t pollard_pm1(uint64_t n, uint32_t B) noexcept {
     const size_t sz = powers.size();
     for (size_t i = 0; i < sz; i += BATCH) {
         const size_t block_end = std::min(i + BATCH, sz);
-        for (size_t j = i; j < block_end; ++j)
-            as[j - i] = a = M.pow(a, powers[j]);    // a = a^(q^k)
+        for (size_t j = i; j < block_end; ++j) as[j - i] = a = M.pow(a, powers[j]);    // a = a^(q^k)
 
         uint64_t g = std::gcd(M.from(a) - 1, n);
         if (g == 1) continue;                       // в блоке делитель не созрел, дальше
@@ -615,7 +383,7 @@ inline uint64_t pollard_rho(uint64_t n) noexcept {
         const uint64_t cn = c % n;                  // контракт rho_batch_impl: 0 < c < n
         if (cn == 0) continue;
         const uint64_t d = n <= RHO_LAZY_MAX ? rho_batch_impl<true>(n, cn) : rho_batch_impl<false>(n, cn);
-        if (d) return d;
+        if (d) [[likely]] return d;
     }
     return 0;
 }
@@ -708,3 +476,5 @@ inline void balance_fctr(uint64_t n, std::vector<uint64_t> &factors) noexcept {
     ferma_fctr(n, factors);
     return;
 }
+
+} // namespace hpc
