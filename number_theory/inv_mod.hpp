@@ -1,112 +1,106 @@
 #pragma once
-#include <bit>
-#include <cstdint>
-#include <immintrin.h>
+#include <cassert>
+#include <span>
+#include <utility>
 
-#include "base.hpp"
+#include "redc.hpp"
 
 namespace hpc {
 
-// ax≡1 (mod m)
-// m - нечётное
-inline uint64_t inv_mod_odd(uint64_t a, uint64_t m) noexcept {
-    [[assume((m & 1ull) == 1ull)]];
-    if (m <= 1) return 0;
-    
-    uint64_t u = a % m;
-    if (u == 0) return 0; // Если a кратно m, обратного не существует
+/**
+ * @brief Вычисляет a^(-1) mod m для нечетного m и известного m_inv = -m^(-1) mod 2^64.
+ *        Основное вычислительное ядро без повторного вычисления m_inv.
+ */
+template <std::unsigned_integral W>
+[[nodiscard]] constexpr W inv_mod_odd(W a, W m, W m_inv) noexcept {
+    [[assume((m & W{1}) == W{1})]];
+    [[assume(m > W{1})]];
+    using D = detail::wider_uint_t<W>;
 
-    // 1. Вычисляем -m^{-1} mod 2^64 с помощью метода Ньютона-Рафсона.
-    uint64_t neg_inv_m = -inv_mod2(m);
+    if (a >= m) a %= m;
+    if (a == 0) return 0; // Обратного не существует
+    if (a == 1) return 1;
 
-    uint64_t v = m;
-    uint64_t x1 = 1, x2 = 0;
+    W u = m;
+    W v = a;
+    W A = 0;
+    W C = 1;
 
-    // 2. Предварительный шаг: если u изначально четное, сдвигаем его.
-    uint64_t s = _tzcnt_u64(u);
-    if (s) {
-        u >>= s;
-        // Трюк Монтгомери: вычисляем сдвиг на s бит без цикла
-        uint64_t q = _bzhi_u64(x1 * neg_inv_m, s); 
-        x1 = static_cast<uint64_t>((static_cast<__uint128_t>(x1) + static_cast<__uint128_t>(q) * m) >> s);
+    // Убираем младшие нули v
+    int tz = std::countr_zero(v);
+    if (tz > 0) {
+        v >>= tz;
+        W q = m_inv & ((W{1} << tz) - W{1});
+        C = static_cast<W>((static_cast<D>(q) * m + D{1}) >> tz);
+        if (v == 1) return C;
     }
 
-    // 3. Основной цикл: u и v всегда нечетные на входе в итерацию
+    // Главный цикл: u и v всегда нечётные
     while (u != v) {
-        // Устраняем ветвление: используем булеву переменную
-        // Компилятор применит инструкции CMP и CMOV
-        bool u_gt_v = (u > v);
-        
-        // Считаем разности для обоих случаев
-        uint64_t diff = u_gt_v ? (u - v) : (v - u);
-
-        uint64_t x_diff1 = x1 - x2;
-        if (x1 < x2) x_diff1 += m; // Компилируется в branchless (sub + sbb + add / cmov)
-
-        uint64_t x_diff2 = x2 - x1;
-        if (x2 < x1) x_diff2 += m;
-
-        uint64_t x_diff = u_gt_v ? x_diff1 : x_diff2;
-
-        // 4. Трюк Монтгомери для разности (избавляемся от цикла while(s--))
-        s = _tzcnt_u64(diff);
-        diff >>= s;
-        
-        // _bzhi_u64 обнуляет все биты старше s. Быстрая инструкция из BMI2.
-        uint64_t q = _bzhi_u64(x_diff * neg_inv_m, s);
-        
-        // icpx транслирует это в пару инструкций (mul, add, adc, shrd). Это мега-быстро.
-        uint64_t x_shifted = static_cast<uint64_t>((static_cast<__uint128_t>(x_diff) + static_cast<__uint128_t>(q) * m) >> s);
-
-        // 5. Обновляем u, v, x1, x2 безусловно через CMOV
-        if (u_gt_v) {
-            u = diff;
-            x1 = x_shifted;
-        } else {
-            v = diff;
-            x2 = x_shifted;
+        if (u < v) {
+            std::swap(u, v);
+            std::swap(A, C);
         }
+
+        u -= v;
+        A = (A >= C) ? (A - C) : (A + m - C);
+
+        // u стал чётным, сдвигаем все нули
+        int t = std::countr_zero(u);
+        u >>= t;
+
+        W q = (A * m_inv) & ((W{1} << t) - W{1});
+        A = static_cast<W>((static_cast<D>(q) * m + A) >> t);
+
+        if (u == 1) return A;
     }
 
-    return (v == 1) ? x2 : 0;
+    // Если сошлись к числу > 1, значит gcd(a, m) > 1, обратного нет
+    return (u == 1) ? A : 0;
 }
 
-// ax≡1 (mod m)
-inline uint64_t inv_mod(uint64_t a, uint64_t m) noexcept {
-    if (m <= 1) return 0;
-
-    uint64_t k = _tzcnt_u64(m);
+template <std::unsigned_integral W>
+[[nodiscard]] constexpr W inv_mod_odd(W a, W m) noexcept {
+    [[assume((m & W{1}) == W{1})]];
+    if (m == 1) return 0; // по модулю 1 единственный вычет - 0
     
-    // 1. Если m нечетное - сразу вызываем нашу функцию
-    if (k == 0) return inv_mod_odd(a, m);
+    const W m_inv = -inv_mod2(m);
+    return inv_mod_odd(a, m, m_inv);
+}
 
-    // 2. Если m четное, обратное существует ТОЛЬКО для нечетных a
-    if ((a & 1) == 0) return 0;
+/**
+ * @brief Обращает массив вычетов в Montgomery-форме одним обращением (трюк Монтгомери).
+ * @param in  Входы в Montgomery-форме: in[i] = a_i * R mod m.
+ * @param out Выход в Montgomery-форме: out[i] = a_i^(-1) * R mod m.
+ * @note Все a_i обязаны быть обратимы: один необратимый элемент обнуляет общее
+ *       произведение, и тогда ВСЕ выходы становятся нулями.
+ * @note in и out не должны пересекаться: прямой проход затирает out префиксами,
+ *       а обратному нужны исходные in[i].
+ */
+template <std::unsigned_integral W>
+void batch_inverse(std::span<const W> in, std::span<W> out, const montgomery<W> &M) {
+    const size_t n = in.size();
+    if (n == 0) return;
+    assert(out.size() >= n);
 
-    uint64_t m_odd = m >> k;
+    // 1. Прямой проход: префиксные произведения P[i] = in[0] * ... * in[i] mod m
+    // Префиксы храним in-place прямо в out
+    out[0] = in[0];
+    for (size_t i = 1; i < n; ++i) {
+        out[i] = M.mul(out[i - 1], in[i]);
+    }
 
-    // 3. Считаем a^{-1} mod 2^k
-    uint64_t inv_a = inv_mod2(a);
-    uint64_t c2 = _bzhi_u64(inv_a, k); // обрезаем до k бит
+    // 2. Единственное обращение общего произведения. M.m_inv хранит +m^(-1), а ядру
+    //    нужен -m^(-1) - берём готовый вместо повторного метода Ньютона.
+    W inv = M.to(inv_mod_odd(M.from(out[n - 1]), M.m, static_cast<W>(W{0} - M.m_inv)));
 
-    // Краевой случай: m было степенью двойки
-    if (m_odd == 1) return c2;
-
-    // 4. Считаем a^{-1} mod m_odd
-    uint64_t c1 = inv_mod_odd(a, m_odd);
-    if (c1 == 0) return 0; // Если НОД(a, m_odd) != 1
-
-    // 5. Китайская теорема об остатках (CRT)
-    // Ищем X = c1 + m_odd * K, такой что X ≡ c2 (mod 2^k)
-    // Математически: K ≡ (c2 - c1) * m_odd^{-1} (mod 2^k)
-    
-    uint64_t inv_m_odd = inv_mod2(m_odd); 
-    
-    // _bzhi_u64 выполняет роль быстрого (mod 2^k)
-    // Беззнаковое переполнение (c2 - c1) абсолютно легально и математически корректно
-    uint64_t K = _bzhi_u64((c2 - c1) * inv_m_odd, k);
-
-    return c1 + m_odd * K;
+    // 3. Обратный проход
+    for (size_t i = n - 1; i > 0; --i) {
+        W prefix = out[i - 1];            // in[0] * ... * in[i-1]
+        out[i] = M.mul(inv, prefix); // in[i]^(-1) = inv * prefix
+        inv = M.mul(inv, in[i]);     // отсекаем in[i], оставляем inv для in[0...i-1]
+    }
+    out[0] = inv;
 }
 
 } // namespace hpc

@@ -11,6 +11,7 @@
 /*.cpp
 compile_flags.txt
 number_theory/pollard_rho.hpp
+number_theory/inv_mod_old.hpp
 
 matan/dft/fourierPortrait/*.png
 matan/dft/fourierPortrait/points

@@ -1,5 +1,5 @@
 #pragma once
-#include <cstdint>
+#include <concepts>
 
 #include "base.hpp"
 
@@ -10,7 +10,7 @@ namespace hpc {
 // 32- и 64-битной версий совпадает с точностью до этих двух типов.
 // Все значения внутри хранятся в форме a_bar = a * R mod m; константы считаются
 // раз на m. Всё constexpr: при фиксированном модуле контекст строится компилятором.
-template <typename W>
+template <std::unsigned_integral W>
 struct montgomery {
     static constexpr int BITS = static_cast<int>(sizeof(W) * 8);
     using D = detail::wider_uint_t<W>;
@@ -121,15 +121,18 @@ using mont32 = montgomery<uint32_t>;
 // двух таких меньше 4m^2, а контракт redc_lazy требует вход < mR — отсюда 4m <= R.
 inline constexpr uint64_t LAZY_MAX = ~0ull / 4;
 
-template <typename W, typename D>
+template <typename W>
 struct barrett {
     static constexpr int BITS = static_cast<int>(sizeof(W) * 8);
+    using D = detail::wider_uint_t<W>;
 
     W m;     // любой модуль
     W m_inv; // floor(R / m)
 
-    constexpr explicit barrett(W mod) noexcept : m(mod){
-        m_inv = static_cast<W>(static_cast<D>(1) << BITS / m);
+    // Скобки обязательны: '/' связывает сильнее '<<', и без них выходило D(1) << (BITS / m),
+    // то есть m_inv = 1 при любом m > BITS. Контракт: m >= 2 (иначе R / m не влезает в W).
+    constexpr explicit barrett(W mod) noexcept : m(mod) {
+        m_inv = static_cast<W>((D{1} << BITS) / m);
     }
 
     // REDC: x < R, возвращает x mod m
@@ -139,6 +142,13 @@ struct barrett {
         W r;
         bool borrow = __builtin_sub_overflow(r_bar, m, &r);
         return borrow ? r + m : r;
+    }
+
+    // «Ленивый» REDC: без финального условного вычитания.
+    // Контракт: x < R (любое слово), результат в [0, 2m) и при этом не больше x.
+    constexpr W redc_lazy(W x) const noexcept {
+        W q = static_cast<W>(((static_cast<D>(x) * m_inv) >> BITS));
+        return x - m * q;
     }
 };
 

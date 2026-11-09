@@ -6,13 +6,13 @@
 namespace hpc {
 
 // x^{-1} mod 2^W для нечётного x, метод Ньютона.
-// Старт y = x точен на 3 бита (x*x == 1 mod 8 при нечётном x), каждый шаг
-// удваивает: 3 -> 6 -> 12 -> 24 -> 48 -> 96. Значит 4 шага хватает для 32 бит, 5 для 64.
+// Старт y = (3*x)⨁2 точен на 5 бита , каждый шаг
+// удваивает: 5 -> 10 -> 20 -> 40 -> 80. Значит 3 шага хватает для 32 бит, 4 для 64.
 template <std::unsigned_integral T>
 [[nodiscard]] constexpr T inv_mod2(T x) noexcept {
-    T y = x;
-    constexpr int itr = std::countr_zero(sizeof(T)) + 2;
-    for (int i = 0; i < itr; ++i) y *= T{2} - x * y;
+    T y = (T{3} * x) ^ T{2};
+    constexpr int itr = std::countr_zero(sizeof(T));
+    for (int i = 0; i <= itr; ++i) y *= T{2} - x * y;
     return y;
 }
 

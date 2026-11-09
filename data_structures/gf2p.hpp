@@ -68,7 +68,7 @@ struct gf2p {
         return a -= b;
     }
 
-    [[nodiscard]] friend constexpr gf2p operator*(gf2p a, gf2p b) noexcept {
+    [[nodiscard]] static constexpr gf2p mul_loop(gf2p a, gf2p b) noexcept {
         T op_a = a.x;
         T op_b = b.x;
         T res = 0;
@@ -82,7 +82,20 @@ struct gf2p {
             op_a = (op_a << 1) ^ (POLY & overflow_mask);
         }
 
-        return gf2p(res);
+        return gf2p{res};
+    }
+
+    [[nodiscard]] friend constexpr gf2p operator*(gf2p a, gf2p b) noexcept {
+        if (std::is_constant_evaluated()) mul_loop(a, b);
+        if constexpr (sizeof(T) < 8) {
+            return mul_loop(a, b);
+        } else {
+            const __m128i P = _mm_cvtsi64_si128(POLY);
+            __m128i prod = _mm_clmulepi64_si128(_mm_cvtsi64_si128(a), _mm_cvtsi64_si128(b), 0x00);
+            __m128i t    = _mm_clmulepi64_si128(prod, P, 0x01);
+            __m128i u    = _mm_clmulepi64_si128(t,    P, 0x01);
+            return gf2p{_mm_cvtsi128_si64(_mm_xor_si128(_mm_xor_si128(prod, t), u))};
+        }
     }
 
     [[nodiscard]] constexpr bool operator==(gf2p other) const noexcept { return x == other.x; }
