@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <complex>
 #include <numbers>
 #include <omp.h>
@@ -31,7 +32,9 @@ inline void zero_pad(std::vector<cd> &arr) noexcept {
 // танцевать вокруг нуля), здесь линейно интерполируется та же кривая в N =
 // bit_ceil точек, равномерно по параметру. Кривая та же, меняется только число
 // отсчётов, поэтому бин i по-прежнему отвечает гармонике i.
-inline void resample_pow2(std::vector<cd> &c, size_t &n) noexcept {
+// min_n - нижняя граница на N: чтобы взять гармоники [-M; M] без наложения бинов,
+// нужно N >= 2M+1, иначе бин k одновременно отвечает частотам k и k-N.
+inline void resample_pow2(std::vector<cd> &c, size_t &n, size_t min_n = 0) noexcept {
     const size_t P = c.size();
     if (P < 2) return;
 
@@ -39,7 +42,7 @@ inline void resample_pow2(std::vector<cd> &c, size_t &n) noexcept {
     // дубликат: период образуют Q различных вершин c[0..Q-1] с переходом c[Q-1]
     // -> c[0].
     const size_t Q = (c.front() == c.back()) ? P - 1 : P;
-    const size_t N = std::bit_ceil(Q);
+    const size_t N = std::bit_ceil(std::max(Q, min_n));
     n = N;
     if (N == Q) {
         c.resize(Q);
